@@ -1,0 +1,14 @@
+[Unit]
+Description=NFT Firewall Daily Status Report — sends Good Morning report to Keybase
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=fw-admin
+WorkingDirectory=/opt/nft-firewall
+ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py firewall-report --weekly
+ExecStartPost=/usr/bin/python3 /opt/nft-firewall/src/main.py maintenance
+Environment=PYTHONPATH=/opt/nft-firewall/src
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nft-daily-report

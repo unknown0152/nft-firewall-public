@@ -1,0 +1,18 @@
+[Unit]
+Description=NFT Firewall SSH Alert — intrusion notifier
+After=network-online.target fail2ban.service
+Wants=network-online.target fail2ban.service
+
+[Service]
+Type=simple
+User=fw-admin
+WorkingDirectory=/opt/nft-firewall
+ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py ssh-alert daemon
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nft-ssh-alert
+
+[Install]
+WantedBy=multi-user.target

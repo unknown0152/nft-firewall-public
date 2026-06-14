@@ -1,0 +1,7 @@
+[Unit]
+Description=NFT Firewall threat feed update
+
+[Service]
+Type=oneshot
+User=fw-admin
+ExecStart=/usr/local/bin/fw threat-update

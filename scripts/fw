@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="${NFT_FIREWALL_HOME:-/opt/nft-firewall}"
+MAIN_PY="${NFT_FIREWALL_MAIN:-$APP_DIR/src/main.py}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+
+if [ ! -f "$MAIN_PY" ]; then
+  repo_main="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/main.py"
+  if [ -f "$repo_main" ]; then
+    MAIN_PY="$repo_main"
+    APP_DIR="$(cd "$(dirname "$repo_main")/.." && pwd)"
+  fi
+fi
+
+cmd="${1:-}"
+case "$cmd" in
+  menu|doctor|simulate|safe-apply|block|unblock|allow|disallow|ip-list|status|health|debug|logs|rules|profiles|threat-update|geoblock|geoblock-test|geoblock-status|geounblock|geolist|set-stats|metrics-update|keybase-test)
+    export PYTHONPATH="$APP_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+    exec "$PYTHON_BIN" "$MAIN_PY" "$@"
+    ;;
+  apply)
+    echo "fw: use 'fw safe-apply <profile>' for live changes" >&2
+    exit 2
+    ;;
+  "")
+    export PYTHONPATH="$APP_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+    exec "$PYTHON_BIN" "$MAIN_PY" menu
+    ;;
+  -h|--help|help)
+    export PYTHONPATH="$APP_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+    exec "$PYTHON_BIN" "$MAIN_PY" --help
+    ;;
+  *)
+    echo "fw: command not permitted through wrapper: $cmd" >&2
+    exit 2
+    ;;
+esac

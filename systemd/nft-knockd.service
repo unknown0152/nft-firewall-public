@@ -1,0 +1,19 @@
+[Unit]
+Description=NFT Firewall — Port-Knock Daemon
+After=network-online.target nft-watchdog.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fw-admin
+WorkingDirectory=/opt/nft-firewall
+ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py knockd daemon
+Restart=always
+RestartSec=10
+Environment=PYTHONPATH=/opt/nft-firewall/src
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nft-knockd
+
+[Install]
+WantedBy=multi-user.target

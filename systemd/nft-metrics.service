@@ -1,0 +1,13 @@
+[Unit]
+Description=NFT Firewall — Prometheus Metrics Update
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=fw-admin
+WorkingDirectory=/opt/nft-firewall
+ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py metrics-update
+Environment=PYTHONPATH=/opt/nft-firewall/src
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nft-metrics

@@ -1,0 +1,169 @@
+# =============================================================================
+# NFT Firewall V11.0 'Battle-Hardened' — Configuration Template
+# =============================================================================
+#
+# Copy to config/firewall.ini and fill in your real values.
+# NEVER commit firewall.ini — it is excluded by .gitignore.
+#
+# The setup wizard (setup.py) will auto-detect most of these values and write
+# firewall.ini for you.  Use this file as a reference or when deploying
+# manually to a new server.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# [network] — physical topology, VPN endpoint, open ports
+# -----------------------------------------------------------------------------
+[network]
+
+# Physical (WAN-facing) NIC name.  Run `ip link show` to find yours.
+# The setup wizard skips wg*, docker*, and veth* interfaces automatically.
+phy_if          = REDACTED_SECRET
+
+# WireGuard tunnel interface.  Must match your /etc/wireguard/*.conf filename.
+vpn_interface   = wg0
+
+# Local LAN subnet in CIDR notation.  Used for SSH and FORWARD allow rules.
+lan_net         = REDACTED_SECRET
+
+# LAN input policy on the physical interface.
+# false = SSH plus lan_allow_ports only; all other LAN input is dropped.
+# true  = legacy trusted-LAN behavior; LAN can reach all host ports.
+lan_full_access = false
+
+# TCP ports reachable from LAN when lan_full_access=false.
+# SSH is always allowed from LAN separately; include other local services here.
+lan_allow_ports = 2222,32400
+
+# WireGuard server public endpoint IP.
+# This is the ONLY hole in the OUTPUT chain: packets are accepted only when
+# they carry the wg-quick kernel fwmark (0xca6c = 51820).  No other process
+# can forge that mark, so the bootstrap hole is identity-locked to the
+# WireGuard kernel module.
+vpn_server_ip   = REDACTED_SECRET
+
+# WireGuard server UDP port.
+vpn_server_port = REDACTED_SECRET
+
+# SSH daemon port.  Must match your /etc/ssh/sshd_config Port directive.
+ssh_port        = REDACTED_SECRET
+
+# Optional: comma-separated extra TCP ports to open on the VPN input chain.
+# Leave empty or omit if not needed.
+extra_ports     = REDACTED_SECRET
+
+# Optional: single BitTorrent port — opens both TCP and UDP on the VPN interface.
+# Leave empty or omit if you do not run a torrent client.
+torrent_port    = REDACTED_SECRET
+
+# -----------------------------------------------------------------------------
+# [safety] — ranges that must never enter blocked_ips
+# LAN subnet is always protected automatically; add static admin/VPN/provider
+# ranges here as comma or space separated CIDRs.
+# -----------------------------------------------------------------------------
+[safety]
+never_block     = 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12
+
+# -----------------------------------------------------------------------------
+# [cosmos] — Cosmos Cloud reverse-proxy compatibility
+# This is for Cosmos Cloud's Docker gateway/reverse proxy model only.
+# Cosmos VPN is intentionally not enabled; UDP 4242 is not opened here.
+# -----------------------------------------------------------------------------
+[cosmos]
+enabled      = true
+public_ports = 80,443
+
+# -----------------------------------------------------------------------------
+# [keybase] — ChatOps bot identity
+# Alerts (AUTO-BANNED, VPN Down, SSH Login, etc.) are posted to this team/channel.
+# Two-way bot commands (!status, !block, !unblock, !ip-list, !top) are received
+# from the same channel.
+# -----------------------------------------------------------------------------
+[keybase]
+
+# Keybase username for direct-message fallback if the team channel is unavailable.
+target_user     = REDACTED_SECRET
+
+# Linux system user that owns the Keybase daemon (`keybase status` must pass).
+# Typically the non-root user whose home directory holds the Keybase config.
+linux_user      = REDACTED_SECRET
+
+# Keybase team name for all notifications.
+team            = REDACTED_SECRET
+
+# Channel within the team (default: general).
+channel         = general
+
+# -----------------------------------------------------------------------------
+# [watchdog] — WireGuard health-monitor tuning
+# All values are optional; built-in defaults are shown.
+# -----------------------------------------------------------------------------
+[watchdog]
+
+# Seconds between VPN health polls.
+check_interval          = 30
+
+# Seconds to wait after a recovery attempt before re-checking.
+recovery_wait           = 40
+
+# Seconds between escalated recovery retries (4-level escalation).
+recovery_retry_interval = 300
+
+# Hour of day (0–23, 24h clock) to send the automatic daily summary to Keybase.
+daily_summary_hour      = 8
+
+# Seconds without VPN traffic before declaring a stall (triggers a ⚠️ VPN Stall alert).
+traffic_stall_timeout   = 300
+
+# -----------------------------------------------------------------------------
+# [vpn] — WireGuard interface details used by the watchdog
+# All values are optional; built-in defaults are shown.
+# -----------------------------------------------------------------------------
+[vpn]
+
+# WireGuard interface name (should match [network] vpn_interface).
+interface        = wg0
+
+# Absolute path to the WireGuard config file.
+# Used only during Level-3 recovery (DNS re-resolution of the endpoint hostname).
+config           = /etc/wireguard/wg0.conf
+
+# Seconds since last WireGuard handshake before the tunnel is declared degraded.
+handshake_timeout = 180
+
+# -----------------------------------------------------------------------------
+# [geoip] — SSH GeoIP allow-list (physical NIC only)
+# IPs that are NOT on the LAN and NOT in the dk_ips nftables set are dropped
+# at the SSH port on the physical interface.
+# Populate the live set with: sudo nft add element ip firewall dk_ips { <CIDR> }
+# The setup wizard can load a country CIDR file if you provide the path below.
+# -----------------------------------------------------------------------------
+[geoip]
+
+# Comma-separated ISO 3166-1 alpha-2 country codes to allow SSH from.
+# Example: DK,NO,SE
+# Leave empty to disable the GeoIP SSH filter (all non-LAN SSH blocked on PHY).
+allowed_countries = REDACTED_SECRET
+
+# Optional: path to a CIDR file to bulk-load into the dk_ips nftables set.
+# Generate with: https://www.ipdeny.com/ipblocks/
+cidr_file         = REDACTED_SECRET
+
+[threatfeed]
+# Set enabled = false to disable automatic threat feed sync
+enabled = true
+url = https://rules.emergingthreats.net/blockrules/compromised-ips.txt
+max_entries = 5000
+
+[geoblock]
+# Space-separated ISO 3166-1 alpha-2 country codes to block on startup after apply
+blocked_countries = CN RU KP
+
+[knockd]
+# Three-port knock sequence (comma-separated UDP ports)
+sequence = 7000,8000,9000
+# Protocol to listen for: udp or tcp
+protocol = udp
+# Seconds the full sequence must complete within
+window_seconds = 10
+# Seconds SSH stays open after a successful knock
+open_ttl_seconds = 30

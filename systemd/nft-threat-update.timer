@@ -1,0 +1,11 @@
+[Unit]
+Description=NFT Firewall — Daily Threat Feed Sync
+Requires=nft-threat-update.service
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+AccuracySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

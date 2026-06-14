@@ -1,0 +1,11 @@
+[Unit]
+Description=NFT Firewall Daily Status Report — 08:00 every morning
+Requires=nft-daily-report.service
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=NFT Firewall doctor check
+
+[Service]
+Type=oneshot
+User=fw-admin
+ExecStart=/usr/local/bin/fw doctor
