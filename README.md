@@ -9,6 +9,18 @@ rules directly and can affect host connectivity. Review generated rules before
 applying them, keep an out-of-band recovery path, and do not deploy it on a
 production host without understanding the local network topology.
 
+## Current Status
+
+This repository is a public-safe source export from a real operational
+deployment. The code, tests, systemd templates, and operator docs are included,
+but live host configuration, runtime state, logs, backup artifacts, and private
+history are intentionally excluded.
+
+The deployment documentation is conservative on purpose. It focuses on review,
+validation, and recovery workflows instead of offering a one-command public
+installer. Public installation steps should be written only after they have
+been tested on a clean target host.
+
 ## Features
 
 - nftables ruleset generation with a default-drop input posture.
@@ -35,6 +47,18 @@ Use [config/firewall.ini.example](config/firewall.ini.example) as the starting
 point for local configuration. Real interface names, LAN ranges, VPN endpoints,
 SSH ports, Keybase identifiers, and service-specific values belong only in a
 private deployment config.
+
+## Repository Structure
+
+- `src/core/` contains ruleset generation, state persistence, and validation.
+- `src/daemons/` contains watchdog, listener, knockd, and SSH alert daemons.
+- `src/integrations/` contains Docker, GeoIP, and threat-feed helpers.
+- `src/utils/` contains shared formatting, metrics, Keybase, and validation
+  utilities.
+- `systemd/` contains service and timer templates.
+- `scripts/` contains local operator and maintenance helpers.
+- `tests/unit/` contains the unit and invariant test suite.
+- `docs/` contains operational maintenance and migration notes.
 
 ## Development Checks
 
