@@ -116,6 +116,37 @@ def _require_root() -> None:
         _die("Must run as root:  sudo python3 setup.py install")
 
 
+REQUIRED_INSTALL_COMMANDS = (
+    ("nft", "nftables"),
+    ("systemctl", "systemd"),
+    ("visudo", "sudo"),
+    ("ip", "iproute2"),
+    ("python3", "python3"),
+)
+
+
+def step0_0_validate_prerequisites() -> None:
+    """Fail before persistent install side effects if required host tools are missing."""
+    _header("Preflight — Installer prerequisites")
+
+    missing = [
+        (cmd, package)
+        for cmd, package in REQUIRED_INSTALL_COMMANDS
+        if shutil.which(cmd) is None
+    ]
+    if missing:
+        lines = [
+            "Missing required command(s):",
+            *[f"  - {cmd}  (Debian package: {package})" for cmd, package in missing],
+            "",
+            "Install the missing package(s), then rerun:",
+            "  sudo python3 setup.py install",
+        ]
+        _die("\n".join(lines))
+
+    _ok("Required commands found: " + ", ".join(cmd for cmd, _ in REQUIRED_INSTALL_COMMANDS))
+
+
 def _user_exists(name: str) -> bool:
     try:
         pwd.getpwnam(name)
@@ -493,11 +524,12 @@ def step0_configure(reconfigure: bool = False) -> None:
         network_section["torrent_port"] = torrent_port
 
     keybase_section: dict = {}
+    keybase_enabled = any((kb_linux_user, kb_team, kb_target_user))
     if kb_linux_user:
         keybase_section["linux_user"] = kb_linux_user
     if kb_team:
         keybase_section["team"] = kb_team
-    if kb_channel:
+    if keybase_enabled and kb_channel:
         keybase_section["channel"] = kb_channel
     if kb_target_user:
         keybase_section["target_user"] = kb_target_user
@@ -669,8 +701,11 @@ def step2_5_nft_preflight(src_path: Optional[Path] = None) -> None:
         tmp.write(ruleset)
         tmp.flush()
         
-        r = subprocess.run(["/usr/sbin/nft", "--check", "--file", tmp.name],
-                          capture_output=True, text=True)
+        try:
+            r = subprocess.run(["/usr/sbin/nft", "--check", "--file", tmp.name],
+                              capture_output=True, text=True)
+        except FileNotFoundError:
+            _die("Missing /usr/sbin/nft. Install Debian package: nftables")
         if r.returncode != 0:
             print(f"\033[31m\033[1m  NFT Syntax Error Detected!\033[0m")
             print(r.stderr.strip())
@@ -1118,6 +1153,7 @@ def step7_activate_vpn() -> None:
 # ── Sub-commands ──────────────────────────────────────────────────────────────
 
 def cmd_install(reconfigure: bool = False) -> None:
+    step0_0_validate_prerequisites()
     step0_configure(reconfigure=reconfigure)
     step1_create_system_user()
     step2_install_code()

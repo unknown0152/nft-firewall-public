@@ -10,6 +10,7 @@ def test_setup_install_sequence_does_not_apply_live_rules(monkeypatch):
 
     calls = []
     for name in (
+        "step0_0_validate_prerequisites",
         "step0_configure",
         "step1_create_system_user",
         "step2_install_code",
@@ -26,6 +27,7 @@ def test_setup_install_sequence_does_not_apply_live_rules(monkeypatch):
 
     # The installer should run the sequence but not 'apply' (which is the live rule command)
     # Applying rules is handled by 'fw safe-apply' manually post-install.
+    assert calls[0] == "step0_0_validate_prerequisites"
     assert "step7_activate_vpn" in calls
 
 
@@ -96,6 +98,7 @@ def test_install_sequence_calls_nft_preflight(monkeypatch):
 
     calls = []
     for name in (
+        "step0_0_validate_prerequisites",
         "step0_configure",
         "step1_create_system_user",
         "step2_install_code",
@@ -111,8 +114,49 @@ def test_install_sequence_calls_nft_preflight(monkeypatch):
     setup.cmd_install()
 
     assert "step2_5_nft_preflight" in calls
+    assert calls.index("step0_0_validate_prerequisites") < calls.index("step0_configure")
     assert calls.index("step2_5_nft_preflight") > calls.index("step2_install_code")
     assert calls.index("step2_5_nft_preflight") < calls.index("step3_scaffold_dirs")
+
+
+def test_install_prerequisites_run_before_side_effects(monkeypatch):
+    import setup
+
+    calls = []
+    for name in (
+        "step0_configure",
+        "step1_create_system_user",
+        "step2_install_code",
+        "step2_5_nft_preflight",
+        "step3_scaffold_dirs",
+        "step4_install_sudoers",
+        "step5_deploy_services",
+        "step6_reload_and_restart",
+        "step7_activate_vpn",
+    ):
+        monkeypatch.setattr(setup, name, lambda name=name, **_kw: calls.append(name))
+
+    monkeypatch.setattr(setup.shutil, "which", lambda cmd: None if cmd == "nft" else f"/usr/bin/{cmd}")
+
+    with pytest.raises(SystemExit):
+        setup.cmd_install()
+
+    assert calls == []
+
+
+def test_validate_prerequisites_reports_missing_command(monkeypatch, capsys):
+    import setup
+
+    monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
+    monkeypatch.setattr(setup.shutil, "which", lambda cmd: None if cmd == "nft" else f"/usr/bin/{cmd}")
+
+    with pytest.raises(SystemExit):
+        setup.step0_0_validate_prerequisites()
+
+    captured = capsys.readouterr()
+    assert "Missing required command(s)" in captured.err
+    assert "nft" in captured.err
+    assert "nftables" in captured.err
 
 
 def test_preflight_exits_on_nft_syntax_error(monkeypatch, tmp_path):
@@ -138,6 +182,30 @@ def test_preflight_exits_on_nft_syntax_error(monkeypatch, tmp_path):
 
     with pytest.raises(SystemExit):
         setup.step2_5_nft_preflight(src_path=Path(__file__).resolve().parent.parent.parent / "src")
+
+
+def test_preflight_exits_cleanly_when_nft_missing(monkeypatch, tmp_path, capsys):
+    import setup
+    import subprocess as _subprocess
+
+    ini = tmp_path / "firewall.ini"
+    ini.write_text(
+        "[network]\nphy_if = eth0\nvpn_server_ip = 1.2.3.4\n"
+        "vpn_server_port = 51820\nlan_net = 192.168.1.0/24\nssh_port = 22\n"
+    )
+    monkeypatch.setattr(setup, "_CONF_FILE", ini)
+
+    def _missing_nft(*_args, **_kwargs):
+        raise FileNotFoundError("/usr/sbin/nft")
+
+    monkeypatch.setattr(_subprocess, "run", _missing_nft)
+
+    with pytest.raises(SystemExit):
+        setup.step2_5_nft_preflight(src_path=Path(__file__).resolve().parent.parent.parent / "src")
+
+    captured = capsys.readouterr()
+    assert "Missing /usr/sbin/nft" in captured.err
+    assert "nftables" in captured.err
 
 
 def test_preflight_passes_on_valid_ruleset(monkeypatch, tmp_path):
@@ -173,6 +241,32 @@ def test_preflight_skips_if_ini_missing(monkeypatch, tmp_path):
     setup.step2_5_nft_preflight(src_path=Path(__file__).resolve().parent.parent.parent / "src")
 
     assert run_calls == [], "nft should not be called when firewall.ini is missing"
+
+
+def test_blank_keybase_prompts_do_not_write_partial_keybase_section(monkeypatch, tmp_path):
+    import configparser
+    import setup
+
+    ini = tmp_path / "firewall.ini"
+    monkeypatch.setattr(setup, "_CONF_DIR", tmp_path)
+    monkeypatch.setattr(setup, "_CONF_FILE", ini)
+    monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_detect_phy_if", lambda: "ens3")
+    monkeypatch.setattr(setup, "_detect_vpn_if", lambda: "wg0")
+    monkeypatch.setattr(setup, "_detect_lan_net", lambda _phy_if: "10.0.2.0/24")
+    monkeypatch.setattr(setup, "_detect_vpn_endpoint", lambda _vpn_if: ("", ""))
+    monkeypatch.setattr(setup, "_detect_ssh_port", lambda: "22")
+    monkeypatch.setattr(setup, "_detect_keybase_linux_user", lambda: "")
+    monkeypatch.setattr(setup, "_ask", lambda _label, default="", hint="": default)
+    monkeypatch.setattr(setup, "_ask_ports", lambda _label, default="": default)
+
+    setup.step0_configure()
+
+    cfg = configparser.ConfigParser()
+    cfg.read(ini)
+    assert cfg.has_section("network")
+    assert not cfg.has_section("keybase")
 
 
 def test_install_dir_is_root_owned_not_fw_admin(monkeypatch):
