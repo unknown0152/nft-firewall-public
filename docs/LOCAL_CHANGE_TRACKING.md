@@ -1,15 +1,15 @@
 # Local Change Tracking
 
-This host runs the deployed firewall from `/opt/nft-firewall`.
+Production deployments commonly run the firewall from `/opt/nft-firewall`.
 
-The local git repository in `/opt/nft-firewall` tracks the live deployed source
-tree for operational change control. The first commit is the live baseline
-captured on this host. Use `git status`, `git diff`, and local commits before
-and after maintenance work so firewall changes are reviewable and reversible.
+The local git repository in `/opt/nft-firewall` can track the live deployed
+source tree for operational change control. Use `git status`, `git diff`, and
+local commits before and after maintenance work so firewall changes are
+reviewable and reversible.
 
-`/root/nft-firewall` is a divergent reference checkout only. Do not pull from
-it, reset to it, or copy files from it into `/opt/nft-firewall` without an
-explicit review of the diff and a live safety validation plan.
+If you keep a separate reference checkout, treat it as reference-only. Do not
+pull from it, reset to it, or copy files from it into `/opt/nft-firewall`
+without an explicit review of the diff and a live safety validation plan.
 
 Recommended operator flow:
 
@@ -35,7 +35,7 @@ make venv
 make check
 ```
 
-`make venv` creates `.venv/` under `/opt/nft-firewall` and installs the local
+`make venv` creates `.venv/` under the project checkout and installs the local
 developer/test tools used by this repository there. It does not install the
 firewall as a Python package and does not affect systemd services. `.venv/` is
 ignored by git and should not be committed.
@@ -62,14 +62,14 @@ systemctl list-units 'nft-*' --type=service --state=failed --no-pager --plain
 
 Run the live checks after changes that can affect ruleset generation,
 `/etc/nftables.conf`, watchdog/listener/ssh-alert behavior, systemd units, or
-operator commands used on this host. Documentation-only and local tooling-only
+operator commands used on the host. Documentation-only and local tooling-only
 changes normally need `make check`; run live checks anyway when the doc or
 tooling change describes production commands.
 
 ## Off-Host Recovery
 
 Use a git bundle to export the authoritative deployed repo history without
-pulling from or merging with `/root/nft-firewall`:
+pulling from or merging with a separate reference checkout:
 
 ```bash
 make bundle
@@ -106,6 +106,7 @@ By default this writes a timestamped tarball to `/var/backups/nft-firewall/`.
 It includes the files listed above when present, the deployed
 `/opt/nft-firewall/config/firewall.ini`, optional system config files if they
 exist, and installed `nft-*` systemd unit files from `/etc/systemd/system`.
+Treat that tarball as private deployment data and do not publish it.
 
 This target is export-only. It does not restore files, reload systemd, apply
 nftables, or mutate live firewall state. For a rebuild, inspect the tarball and
@@ -114,7 +115,7 @@ copy files back deliberately, then run the live checks before enabling services.
 ### Off-Host Retention
 
 Local files under `/var/backups/nft-firewall/` are not enough for disaster
-recovery if this host is lost. After running `make bundle` and
+recovery if the host is lost. After running `make bundle` and
 `make backup-state`, copy both timestamped artifacts off-host:
 
 - `nft-firewall-YYYYMMDDTHHMMSSZ.bundle`

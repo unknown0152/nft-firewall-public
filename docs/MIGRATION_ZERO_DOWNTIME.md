@@ -1,6 +1,7 @@
 # Zero-Downtime Migration Guide
 
-This guide applies to the deployed tree at `/opt/nft-firewall`.
+This guide assumes a deployed tree at `/opt/nft-firewall`. Adjust paths if your
+deployment uses a different checkout location.
 
 ## Goals
 

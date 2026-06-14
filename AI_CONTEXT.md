@@ -46,7 +46,7 @@ repository.
 
 ## Current Refactor State
 
-Completed in this deployment:
+Included in this public export:
 
 - Removed blanket geowhitelist accept generation.
 - Geowhitelist now gates only explicit TCP services: SSH and configured 80/443.
@@ -55,9 +55,8 @@ Completed in this deployment:
 - Restored source `systemd/` templates and `setup.sh` so the deployed source
   tree matches the expectations of packaging and user-model tests.
 - Added `pyproject.toml` with pytest and coverage metadata.
-- Keybase listener polling is configurable through `[listener] poll_interval`.
-  This host is set to 15 seconds to reduce sudo/journal noise while preserving
-  ChatOps behavior.
+- Keybase listener polling is configurable through `[listener] poll_interval`
+  to reduce sudo/journal noise while preserving ChatOps behavior.
 - Dynamic set mutations append JSONL audit records to
   `/var/log/nft-firewall/audit.jsonl` after successful live nft mutation and
   persistence update. The `/var/lib/nft-firewall/dynamic-sets.json` format is

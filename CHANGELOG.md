@@ -20,9 +20,9 @@
   80/443 rules, including LAN-only and geowhitelist-gated rules.
 - Isolated doctor unit tests from the host's live ruleset so mocked interface
   names do not conflict with the deployed physical interface.
-- Made Keybase listener polling configurable with bounded parsing. This
-  deployment now uses `[listener] poll_interval = 15` to reduce journal/sudo
-  noise without changing command authorization or firewall behavior.
+- Made Keybase listener polling configurable with bounded parsing to reduce
+  journal/sudo noise without changing command authorization or firewall
+  behavior.
 
 ### Added
 
@@ -58,7 +58,7 @@
 
 ### Operational Notes
 
-- Applied with `safe-apply` on 2026-06-14. Backup:
-  `/opt/nft-firewall/state/nftables_20260614_194815.conf`.
-- Full unit suite: `198 passed`.
-- Core coverage: `90.93%`, above the 80% target.
+- Public export excludes live config, runtime state, generated rulesets,
+  backup artifacts, logs, and host-local history.
+- Full unit suite at export time: `198 passed`.
+- Core coverage at export time: `90.93%`, above the 80% target.
