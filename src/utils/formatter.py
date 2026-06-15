@@ -22,6 +22,22 @@ from typing import List, Optional, Tuple
 # ── Version banner ────────────────────────────────────────────────────────────
 
 VERSION = "11.0"
+_PORT_LABEL_SECTION = "port_labels"
+_PORT_LABEL_PREFIX = {
+    "extra_ports": "vpn_tcp",
+    "lan_allow_ports": "lan_tcp",
+    "lan_allow_udp_ports": "lan_udp",
+}
+_DEFAULT_PORT_LABELS = {
+    ("extra_ports", 80): "HTTP / reverse proxy",
+    ("extra_ports", 443): "HTTPS / reverse proxy",
+    ("lan_allow_ports", 80): "HTTP from LAN",
+    ("lan_allow_ports", 443): "HTTPS from LAN",
+    ("lan_allow_ports", 58473): "SSH from LAN",
+    ("lan_allow_ports", 32400): "Plex from LAN",
+    ("lan_allow_ports", 8096): "Jellyfin from LAN",
+    ("lan_allow_udp_ports", 7359): "Jellyfin discovery",
+}
 
 
 # fw-admin sudoers does NOT permit raw /usr/bin/docker. Route privileged
@@ -106,7 +122,7 @@ def _exposed_ports(cfg_path: Optional[str] = None) -> str:
         seen: set = set()
         parts: List[str] = []
 
-        for port, proto, scope in _firewall_open_ports(cfg_path):
+        for port, proto, scope, _label in _firewall_open_ports(cfg_path):
             key = (port, proto)
             if key not in seen:
                 seen.add(key)
@@ -176,10 +192,25 @@ def _parse_ports(raw: str) -> List[int]:
     return ports
 
 
-def _firewall_open_ports(cfg_path: Optional[str] = None) -> List[Tuple[int, str, str]]:
-    """Return (port, proto, scope) tuples from firewall.ini [network] section."""
+def _port_label_key(key: str, port: int) -> str:
+    return f"{_PORT_LABEL_PREFIX[key]}_{port}"
+
+
+def _port_label(cfg, key: str, port: int) -> str:
+    configured = cfg.get(
+        _PORT_LABEL_SECTION,
+        _port_label_key(key, port),
+        fallback="",
+    ).strip()
+    if configured:
+        return configured
+    return _DEFAULT_PORT_LABELS.get((key, port), "")
+
+
+def _firewall_open_ports(cfg_path: Optional[str] = None) -> List[Tuple[int, str, str, str]]:
+    """Return (port, proto, scope, label) tuples from firewall.ini [network]."""
     import configparser as _cp
-    result: List[Tuple[int, str, str]] = []
+    result: List[Tuple[int, str, str, str]] = []
     _root = Path(__file__).resolve().parent.parent.parent
     candidates: List[Path] = []
     if cfg_path:
@@ -199,15 +230,15 @@ def _firewall_open_ports(cfg_path: Optional[str] = None) -> List[Tuple[int, str,
             cfg = _cp.ConfigParser()
             cfg.read(str(ini))
             for port in _parse_ports(cfg.get("network", "extra_ports", fallback="")):
-                result.append((port, "tcp", "VPN"))
+                result.append((port, "tcp", "VPN", _port_label(cfg, "extra_ports", port)))
             for port in _parse_ports(cfg.get("network", "lan_allow_ports", fallback="")):
-                result.append((port, "tcp", "LAN"))
+                result.append((port, "tcp", "LAN", _port_label(cfg, "lan_allow_ports", port)))
             for port in _parse_ports(cfg.get("network", "lan_allow_udp_ports", fallback="")):
-                result.append((port, "udp", "LAN"))
+                result.append((port, "udp", "LAN", _port_label(cfg, "lan_allow_udp_ports", port)))
             tp = cfg.get("network", "torrent_port", fallback="").strip()
             if tp.isdigit():
-                result.append((int(tp), "tcp", "VPN"))
-                result.append((int(tp), "udp", "VPN"))
+                result.append((int(tp), "tcp", "VPN", "Torrent"))
+                result.append((int(tp), "udp", "VPN", "Torrent"))
             break
     return result
 
@@ -222,12 +253,13 @@ def _exposed_port_lines(cfg_path: Optional[str] = None) -> List[str]:
     seen: set = set()
 
     # Firewall.ini ports
-    for port, proto, scope in _firewall_open_ports(cfg_path):
+    for port, proto, scope, label in _firewall_open_ports(cfg_path):
         key = (port, proto)
         if key not in seen:
             seen.add(key)
             icon = "🏠" if scope == "LAN" else "🛰️"
-            lines.append(f"{icon} `{port}/{proto}`  {scope}")
+            suffix = f" — {label}" if label else ""
+            lines.append(f"{icon} `{port}/{proto}`  {scope}{suffix}")
 
     # Docker registry ports
     try:

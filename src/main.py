@@ -43,6 +43,22 @@ _ETC_CONF      = Path("/etc/nft-firewall/firewall.ini")
 _SYSTEM_CONF   = Path("/etc/nft-watchdog.conf")
 _MARKERS_FILE  = Path("/var/lib/nft-firewall/watchdog-markers.json")
 _NFT_CONF      = Path("/etc/nftables.conf")
+_PORT_LABEL_SECTION = "port_labels"
+_PORT_LABEL_PREFIX = {
+    "extra_ports": "vpn_tcp",
+    "lan_allow_ports": "lan_tcp",
+    "lan_allow_udp_ports": "lan_udp",
+}
+_DEFAULT_PORT_LABELS = {
+    ("extra_ports", 80): "HTTP / reverse proxy",
+    ("extra_ports", 443): "HTTPS / reverse proxy",
+    ("lan_allow_ports", 80): "HTTP from LAN",
+    ("lan_allow_ports", 443): "HTTPS from LAN",
+    ("lan_allow_ports", 58473): "SSH from LAN",
+    ("lan_allow_ports", 32400): "Plex from LAN",
+    ("lan_allow_ports", 8096): "Jellyfin from LAN",
+    ("lan_allow_udp_ports", 7359): "Jellyfin discovery",
+}
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -397,7 +413,67 @@ def _write_config_atomic(path: Path, cfg: configparser.ConfigParser) -> None:
     os.replace(tmp, path)
 
 
-def _change_config_port(path: Path, key: str, port: int | str, *, open_port: bool) -> tuple[bool, list[int]]:
+def _port_label_key(key: str, port: int | str) -> str:
+    from utils.validation import validate_port
+
+    prefix = _PORT_LABEL_PREFIX.get(key)
+    if prefix is None:
+        raise ValueError(f"unsupported port list: {key}")
+    return f"{prefix}_{validate_port(port, 'port')}"
+
+
+def _get_port_label(cfg: configparser.ConfigParser, key: str, port: int | str) -> str:
+    from utils.validation import validate_port
+
+    port_num = validate_port(port, "port")
+    label_key = _port_label_key(key, port_num)
+    configured = cfg.get(_PORT_LABEL_SECTION, label_key, fallback="").strip()
+    if configured:
+        return configured
+    return _DEFAULT_PORT_LABELS.get((key, port_num), "")
+
+
+def _set_port_label(cfg: configparser.ConfigParser, key: str, port: int | str, description: str) -> bool:
+    """Set or clear a port description. Returns True when config changes."""
+    label_key = _port_label_key(key, port)
+    clean = " ".join((description or "").split())
+    old = cfg.get(_PORT_LABEL_SECTION, label_key, fallback="").strip()
+
+    if clean:
+        if not cfg.has_section(_PORT_LABEL_SECTION):
+            cfg.add_section(_PORT_LABEL_SECTION)
+        if old == clean:
+            return False
+        cfg.set(_PORT_LABEL_SECTION, label_key, clean)
+        return True
+
+    if cfg.has_section(_PORT_LABEL_SECTION) and cfg.has_option(_PORT_LABEL_SECTION, label_key):
+        cfg.remove_option(_PORT_LABEL_SECTION, label_key)
+        if not list(cfg.items(_PORT_LABEL_SECTION)):
+            cfg.remove_section(_PORT_LABEL_SECTION)
+        return True
+
+    return False
+
+
+def _format_port_lines(cfg: configparser.ConfigParser, key: str) -> list[str]:
+    """Return one display line per configured port with optional description."""
+    lines: list[str] = []
+    for port in _read_port_list(cfg, key):
+        description = _get_port_label(cfg, key, port)
+        suffix = f" — {description}" if description else ""
+        lines.append(f"`{port}`{suffix}")
+    return lines or ["none"]
+
+
+def _change_config_port(
+    path: Path,
+    key: str,
+    port: int | str,
+    *,
+    open_port: bool,
+    description: str = "",
+) -> tuple[bool, list[int]]:
     """Add or remove a port from one [network] config list.
 
     Returns ``(changed, new_ports)``.
@@ -423,6 +499,11 @@ def _change_config_port(path: Path, key: str, port: int | str, *, open_port: boo
         ports.discard(port)
 
     changed = ports != before
+    if open_port and description.strip():
+        changed = _set_port_label(cfg, key, port, description) or changed
+    if not open_port:
+        changed = _set_port_label(cfg, key, port, "") or changed
+
     if changed:
         cfg.set("network", key, ", ".join(str(p) for p in sorted(ports)))
         _write_config_atomic(path, cfg)
@@ -442,6 +523,7 @@ def _port_change_notification(
     profile: str,
     cfg_path: Path,
     key: str,
+    description: str = "",
 ) -> tuple[str, str, str, str]:
     """Build a Keybase notification for a confirmed live port change."""
     from utils.validation import validate_port
@@ -452,13 +534,16 @@ def _port_change_notification(
     title = f"Firewall port {action}"
     tags = "warning,shield" if open_port else "shield"
     priority = "high" if open_port else "default"
-    body = (
-        f"{action_label}: {label} port {port_num}\n"
-        f"Profile: {profile}\n"
-        f"Config key: network.{key}\n"
-        f"Config: {cfg_path}\n"
-        "Status: safe-apply confirmed; live rules and persisted ruleset updated."
-    )
+    body_lines = [f"{action_label}: {label} port {port_num}"]
+    if description:
+        body_lines.append(f"Description: {description}")
+    body_lines.extend([
+        f"Profile: {profile}",
+        f"Config key: network.{key}",
+        f"Config: {cfg_path}",
+        "Status: safe-apply confirmed; live rules and persisted ruleset updated.",
+    ])
+    body = "\n".join(body_lines)
     return title, body, tags, priority
 
 
@@ -470,6 +555,7 @@ def _notify_port_change(
     profile: str,
     cfg_path: Path,
     key: str,
+    description: str = "",
 ) -> bool:
     """Send a best-effort Keybase alert for a confirmed port change."""
     from utils.keybase import notify
@@ -481,6 +567,7 @@ def _notify_port_change(
         profile=profile,
         cfg_path=cfg_path,
         key=key,
+        description=description,
     )
     return notify(title=title, body=body, tags=tags, priority=priority)
 
@@ -1547,9 +1634,15 @@ def _menu_port_manager() -> None:
         print(f"  Config:  \033[36m{cfg_path}\033[0m")
         print(f"  Profile: \033[36m{profile}\033[0m")
         print()
-        print(f"  VPN TCP ports: \033[36m{_format_port_list(vpn_tcp)}\033[0m")
-        print(f"  LAN TCP ports: \033[36m{_format_port_list(lan_tcp)}\033[0m")
-        print(f"  LAN UDP ports: \033[36m{_format_port_list(lan_udp)}\033[0m")
+        print("  VPN TCP ports:")
+        for line in _format_port_lines(cfg, "extra_ports"):
+            print(f"    \033[36m{line}\033[0m")
+        print("  LAN TCP ports:")
+        for line in _format_port_lines(cfg, "lan_allow_ports"):
+            print(f"    \033[36m{line}\033[0m")
+        print("  LAN UDP ports:")
+        for line in _format_port_lines(cfg, "lan_allow_udp_ports"):
+            print(f"    \033[36m{line}\033[0m")
         print("  \033[90m──────────────────────────────────────────────────\033[0m")
         print()
         print("  \033[34m1.\033[0m  Open VPN TCP port")
@@ -1575,8 +1668,20 @@ def _menu_port_manager() -> None:
         if not raw or raw.lower() == "q":
             continue
 
+        description = ""
+        if open_port:
+            description = _prompt_tty(
+                "  Description / service name (optional, e.g. Jellyfin): "
+            )
+
         try:
-            changed, ports = _change_config_port(cfg_path, key, raw, open_port=open_port)
+            changed, ports = _change_config_port(
+                cfg_path,
+                key,
+                raw,
+                open_port=open_port,
+                description=description,
+            )
         except ValueError as exc:
             print(f"\n  \033[31m✗\033[0m {exc}")
             _wait_for_any_key()
@@ -1584,6 +1689,8 @@ def _menu_port_manager() -> None:
 
         if changed:
             print(f"\n  \033[32m✓\033[0m Updated {key}: {_format_port_list(ports)}")
+            if open_port and description.strip():
+                print(f"  \033[32m✓\033[0m Saved description: {description.strip()}")
         else:
             print(f"\n  \033[90mNo change; port was already {'present' if open_port else 'absent'}.\033[0m")
 
@@ -1594,6 +1701,8 @@ def _menu_port_manager() -> None:
             print("\n  \033[33mSafe apply will roll back live rules unless you type CONFIRM.\033[0m")
             applied = _cmd_safe_apply(argparse.Namespace(profile=profile))
             if changed and applied:
+                cfg_after = _load_config()
+                saved_description = _get_port_label(cfg_after, key, raw)
                 if _notify_port_change(
                     port=raw,
                     label=label,
@@ -1601,6 +1710,7 @@ def _menu_port_manager() -> None:
                     profile=profile,
                     cfg_path=cfg_path,
                     key=key,
+                    description=saved_description,
                 ):
                     print("  \033[32m✓\033[0m Keybase notification sent.")
                 else:

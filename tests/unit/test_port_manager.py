@@ -38,6 +38,65 @@ extra_ports = 443, 80
     assert cfg.get("network", "extra_ports") == "80, 443, 8443"
 
 
+def test_change_config_port_can_store_port_description(tmp_path):
+    config = tmp_path / "firewall.ini"
+    _write_config(config, "[network]\nextra_ports = 80\n")
+
+    changed, ports = main._change_config_port(
+        config,
+        "extra_ports",
+        "8443",
+        open_port=True,
+        description="Test dashboard",
+    )
+
+    cfg = _read_config(config)
+    assert changed is True
+    assert ports == [80, 8443]
+    assert cfg.get("port_labels", "vpn_tcp_8443") == "Test dashboard"
+
+
+def test_change_config_port_removes_description_when_port_closes(tmp_path):
+    config = tmp_path / "firewall.ini"
+    _write_config(
+        config,
+        """
+[network]
+lan_allow_ports = 8096
+
+[port_labels]
+lan_tcp_8096 = Jellyfin
+""",
+    )
+
+    changed, ports = main._change_config_port(config, "lan_allow_ports", 8096, open_port=False)
+
+    cfg = _read_config(config)
+    assert changed is True
+    assert ports == []
+    assert not cfg.has_section("port_labels")
+
+
+def test_format_port_lines_uses_configured_and_default_labels(tmp_path):
+    config = tmp_path / "firewall.ini"
+    _write_config(
+        config,
+        """
+[network]
+lan_allow_ports = 58473, 9000
+
+[port_labels]
+lan_tcp_9000 = Test app
+""",
+    )
+    cfg = _read_config(config)
+
+    assert main._format_port_lines(cfg, "lan_allow_ports") == [
+        "`9000` — Test app",
+        "`58473` — SSH from LAN",
+    ]
+
+
 def test_change_config_port_closes_existing_port(tmp_path):
     config = tmp_path / "firewall.ini"
     _write_config(
@@ -96,10 +155,12 @@ def test_port_change_notification_for_opened_port(tmp_path):
         profile="cosmos-vpn-secure",
         cfg_path=tmp_path / "firewall.ini",
         key="extra_ports",
+        description="Test dashboard",
     )
 
     assert title == "Firewall port opened"
     assert "OPENED: VPN TCP port 8443" in body
+    assert "Description: Test dashboard" in body
     assert "Profile: cosmos-vpn-secure" in body
     assert "Config key: network.extra_ports" in body
     assert "safe-apply confirmed" in body

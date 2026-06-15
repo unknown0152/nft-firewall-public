@@ -71,14 +71,18 @@ def test_firewall_open_ports_report_vpn_and_lan_scopes(tmp_path):
         "lan_allow_ports = 58473, 8096\n"
         "lan_allow_udp_ports = 7359\n"
         "torrent_port = 64279\n"
+        "\n"
+        "[port_labels]\n"
+        "lan_tcp_8096 = Jellyfin\n"
     )
 
     from utils.formatter import _firewall_open_ports
 
     ports = _firewall_open_ports(str(ini))
-    assert (80, "tcp", "VPN") in ports
-    assert (443, "tcp", "VPN") in ports
-    assert (58473, "tcp", "LAN") in ports
-    assert (7359, "udp", "LAN") in ports
-    assert (64279, "tcp", "VPN") in ports
-    assert (64279, "udp", "VPN") in ports
+    assert (80, "tcp", "VPN", "HTTP / reverse proxy") in ports
+    assert (443, "tcp", "VPN", "HTTPS / reverse proxy") in ports
+    assert (58473, "tcp", "LAN", "SSH from LAN") in ports
+    assert (8096, "tcp", "LAN", "Jellyfin") in ports
+    assert (7359, "udp", "LAN", "Jellyfin discovery") in ports
+    assert (64279, "tcp", "VPN", "Torrent") in ports
+    assert (64279, "udp", "VPN", "Torrent") in ports
