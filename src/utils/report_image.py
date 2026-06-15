@@ -30,6 +30,10 @@ _PALETTES = {
         "status_ok_text": "#72e6a3",
         "status_bad_fill": "#4a141b",
         "status_bad_text": "#ff8a98",
+        "table_header": "#20283b",
+        "table_row_a": "#171d2f",
+        "table_row_b": "#1b2236",
+        "bar_track": "#30384f",
     },
     "light": {
         "background": "#eef2f8",
@@ -47,6 +51,10 @@ _PALETTES = {
         "status_ok_text": "#7ee2a8",
         "status_bad_fill": "#4a141b",
         "status_bad_text": "#ff8a98",
+        "table_header": "#eef2f8",
+        "table_row_a": "#ffffff",
+        "table_row_b": "#f8fafc",
+        "bar_track": "#d8deea",
     },
 }
 
@@ -58,6 +66,23 @@ class _Report:
     status: str
     reason: str
     sections: dict[str, list[str]]
+
+
+@dataclass(frozen=True)
+class _PortRow:
+    port: str
+    scope: str
+    service: str
+
+
+@dataclass(frozen=True)
+class _SystemStats:
+    cpu: str
+    ram: str
+    disk: str
+    ram_ratio: float
+    disk_ratio: float
+    load_ratio: float
 
 
 def _plain(line: str) -> str:
@@ -133,6 +158,54 @@ def _metric_rows(parsed: _Report) -> list[tuple[str, str, str]]:
     ]
 
 
+def _port_rows(parsed: _Report) -> list[_PortRow]:
+    rows: list[_PortRow] = []
+    for item in parsed.sections.get("Docker", []):
+        match = _PORT_RE.search(item)
+        if not match:
+            continue
+        port, detail = match.groups()
+        if "—" in detail:
+            scope, service = [part.strip() for part in detail.split("—", 1)]
+        else:
+            scope, service = "Unknown", detail.strip()
+        rows.append(_PortRow(port=port, scope=scope, service=service))
+    return rows
+
+
+def _system_stats(parsed: _Report) -> _SystemStats:
+    items = parsed.sections.get("System", [])
+    cpu = _first_value(items, "CPU", "unknown")
+    ram = _first_value(items, "RAM", "unknown")
+    disk = _first_value(items, "Disk", "unknown")
+
+    load_ratio = 0.0
+    cpu_match = re.search(r"([0-9.]+)", cpu)
+    if cpu_match:
+        load_ratio = min(float(cpu_match.group(1)) / 4.0, 1.0)
+
+    ram_ratio = 0.0
+    ram_match = re.search(r"([0-9.]+)GB\s*/\s*([0-9.]+)GB", ram)
+    if ram_match:
+        used, total = float(ram_match.group(1)), float(ram_match.group(2))
+        if total:
+            ram_ratio = min(used / total, 1.0)
+
+    disk_ratio = 0.0
+    disk_match = re.search(r"(\d+)%", disk)
+    if disk_match:
+        disk_ratio = min(int(disk_match.group(1)) / 100.0, 1.0)
+
+    return _SystemStats(
+        cpu=cpu,
+        ram=ram,
+        disk=disk,
+        ram_ratio=ram_ratio,
+        disk_ratio=disk_ratio,
+        load_ratio=load_ratio,
+    )
+
+
 def _wrap_text(draw, text: str, font, max_width: int) -> list[str]:
     words = text.split()
     if not words:
@@ -196,16 +269,181 @@ def _draw_metric_card(
 ) -> None:
     x1, y1, x2, y2 = box
     _draw_shadow_card(draw, box, palette=palette, radius=22)
-    draw.rounded_rectangle((x1 + 18, y1 + 18, x1 + 28, y2 - 18), radius=5, fill=accent)
-    draw.text((x1 + 44, y1 + 22), label.upper(), font=label_font, fill=palette["muted"])
+    draw.rounded_rectangle((x1 + 18, y1 + 20, x1 + 70, y1 + 72), radius=16, fill=accent)
+    draw.text((x1 + 32, y1 + 34), label[:2].upper(), font=label_font, fill="#ffffff")
+    draw.text((x1 + 88, y1 + 24), label.upper(), font=label_font, fill=palette["muted"])
     _draw_text_block(
         draw,
         value,
-        (x1 + 44, y1 + 58),
+        (x1 + 88, y1 + 58),
         font=value_font,
         fill=palette["text"],
-        max_width=x2 - x1 - 70,
+        max_width=x2 - x1 - 112,
     )
+
+
+def _draw_background(draw, width: int, height: int, palette: dict[str, str]) -> None:
+    if palette["background"] != "#0b1020":
+        return
+    for x in range(-height, width, 92):
+        draw.line((x, height, x + height, 0), fill="#10192d", width=1)
+    for y in range(640, height, 72):
+        draw.line((0, y, width, y), fill="#0f172a", width=1)
+
+
+def _draw_header_art(draw, box: tuple[int, int, int, int]) -> None:
+    x1, y1, x2, y2 = box
+    cx = (x1 + x2) // 2 + 180
+    cy = y1 + 118
+    shield = [
+        (cx, cy - 72),
+        (cx + 58, cy - 48),
+        (cx + 48, cy + 36),
+        (cx, cy + 86),
+        (cx - 48, cy + 36),
+        (cx - 58, cy - 48),
+    ]
+    draw.polygon(shield, fill="#1e3a5f", outline="#67e8f9")
+    inner = [(cx, cy - 42), (cx + 30, cy - 28), (cx + 24, cy + 22), (cx, cy + 52), (cx - 24, cy + 22), (cx - 30, cy - 28)]
+    draw.polygon(inner, fill="#172554", outline="#22d3ee")
+    for i, h in enumerate([34, 58, 78, 46, 66, 38]):
+        bx = cx + 110 + i * 22
+        draw.rounded_rectangle((bx, cy + 58 - h, bx + 10, cy + 58), radius=3, fill="#164e63")
+    for i, h in enumerate([28, 48, 35, 60, 42]):
+        bx = cx - 210 + i * 28
+        draw.rounded_rectangle((bx, cy + 64 - h, bx + 13, cy + 64), radius=3, fill="#0f3d56")
+
+
+def _draw_progress_bar(
+    draw,
+    box: tuple[int, int, int, int],
+    *,
+    ratio: float,
+    fill: str,
+    track: str,
+) -> None:
+    x1, y1, x2, y2 = box
+    ratio = max(0.0, min(ratio, 1.0))
+    draw.rounded_rectangle(box, radius=(y2 - y1) // 2, fill=track)
+    draw.rounded_rectangle((x1, y1, x1 + int((x2 - x1) * ratio), y2), radius=(y2 - y1) // 2, fill=fill)
+
+
+def _draw_donut(
+    draw,
+    box: tuple[int, int, int, int],
+    *,
+    ratio: float,
+    fill: str,
+    track: str,
+    text: str,
+    font,
+    palette: dict[str, str],
+) -> None:
+    ratio = max(0.0, min(ratio, 1.0))
+    draw.arc(box, start=0, end=360, fill=track, width=24)
+    draw.arc(box, start=-90, end=-90 + int(360 * ratio), fill=fill, width=24)
+    tx1, ty1, tx2, ty2 = draw.textbbox((0, 0), text, font=font)
+    cx = (box[0] + box[2]) // 2
+    cy = (box[1] + box[3]) // 2
+    draw.text((cx - (tx2 - tx1) // 2, cy - (ty2 - ty1) // 2 - 2), text, font=font, fill=palette["text"])
+
+
+def _draw_docker_panel(
+    draw,
+    box: tuple[int, int, int, int],
+    *,
+    parsed: _Report,
+    heading_font,
+    body_font,
+    small_font,
+    palette: dict[str, str],
+) -> None:
+    x1, y1, x2, y2 = box
+    rows = _port_rows(parsed)
+    runtime = _first_value(parsed.sections.get("Docker", []), "Runtime", "unknown")
+    _draw_shadow_card(draw, box, palette=palette, radius=24)
+    draw.rounded_rectangle((x1 + 24, y1 + 26, x1 + 38, y1 + 62), radius=6, fill="#32ade6")
+    draw.text((x1 + 56, y1 + 20), "Docker Overview", font=heading_font, fill=palette["text"])
+
+    table_x = x1 + 28
+    table_y = y1 + 82
+    table_w = x2 - x1 - 56
+    header_h = 52
+    draw.rounded_rectangle((table_x, table_y, table_x + table_w, table_y + header_h), radius=12, fill=palette["table_header"])
+    draw.text((table_x + 18, table_y + 14), "Port", font=small_font, fill=palette["text"])
+    draw.text((table_x + 205, table_y + 14), "Service / Application", font=small_font, fill=palette["text"])
+    draw.text((table_x + table_w - 150, table_y + 14), "Scope", font=small_font, fill=palette["text"])
+
+    row_y = table_y + header_h
+    row_h = 47
+    for index, row in enumerate(rows[:9]):
+        fill = palette["table_row_a"] if index % 2 == 0 else palette["table_row_b"]
+        draw.rounded_rectangle((table_x, row_y, table_x + table_w, row_y + row_h), radius=8, fill=fill)
+        chip_color = "#133d5e" if row.scope == "VPN" else "#533b1e"
+        chip_text = "#7cc7ff" if row.scope == "VPN" else "#ffbd66"
+        draw.rounded_rectangle((table_x + 18, row_y + 9, table_x + 146, row_y + 38), radius=9, fill=chip_color)
+        draw.text((table_x + 32, row_y + 12), row.port, font=small_font, fill=chip_text)
+        draw.text((table_x + 205, row_y + 10), row.service[:34], font=body_font, fill=palette["text"])
+        scope_color = "#72e6a3" if row.scope == "LAN" else "#8ab4ff"
+        draw.ellipse((table_x + table_w - 146, row_y + 13, table_x + table_w - 118, row_y + 41), fill=scope_color)
+        draw.text((table_x + table_w - 108, row_y + 10), row.scope, font=body_font, fill=scope_color)
+        row_y += row_h
+
+    runtime_y = y2 - 82
+    draw.line((table_x, runtime_y - 22, table_x + table_w, runtime_y - 22), fill=palette["card_outline"], width=2)
+    draw.text((table_x + 16, runtime_y), f"Runtime: {runtime}", font=heading_font, fill=palette["text"])
+
+
+def _draw_daemons_system_panel(
+    draw,
+    box: tuple[int, int, int, int],
+    *,
+    parsed: _Report,
+    heading_font,
+    body_font,
+    small_font,
+    value_font,
+    palette: dict[str, str],
+) -> None:
+    x1, y1, x2, y2 = box
+    stats = _system_stats(parsed)
+    daemons = parsed.sections.get("Daemons", [])
+    _draw_shadow_card(draw, box, palette=palette, radius=24)
+    draw.rounded_rectangle((x1 + 24, y1 + 26, x1 + 38, y1 + 62), radius=6, fill="#5856d6")
+    draw.text((x1 + 56, y1 + 20), "Daemons & System", font=heading_font, fill=palette["text"])
+
+    daemon_x = x1 + 42
+    y = y1 + 86
+    for item in daemons:
+        label = item.removeprefix("•").strip()
+        draw.ellipse((daemon_x, y + 9, daemon_x + 14, y + 23), fill="#72e6a3")
+        draw.text((daemon_x + 28, y), label, font=body_font, fill=palette["text"])
+        y += 42
+
+    bar_x = x1 + 360
+    label_y = y1 + 88
+    track = palette["bar_track"]
+    for label, value, ratio, accent in [
+        ("CPU load", stats.cpu, stats.load_ratio, "#0a84ff"),
+        ("RAM", stats.ram, stats.ram_ratio, "#34c759"),
+    ]:
+        draw.text((bar_x, label_y), label, font=small_font, fill=palette["muted"])
+        draw.text((bar_x + 300, label_y - 2), value, font=body_font, fill=palette["text"])
+        _draw_progress_bar(draw, (bar_x, label_y + 36, bar_x + 540, label_y + 62), ratio=ratio, fill=accent, track=track)
+        label_y += 92
+
+    disk_box = (x2 - 172, y1 + 82, x2 - 56, y1 + 198)
+    _draw_donut(
+        draw,
+        disk_box,
+        ratio=stats.disk_ratio,
+        fill="#34c759",
+        track=track,
+        text=f"{int(stats.disk_ratio * 100)}%",
+        font=value_font,
+        palette=palette,
+    )
+    draw.text((x2 - 172, y1 + 220), f"Disk: {stats.disk}", font=body_font, fill=palette["text"])
 
 
 def _section_title(section: str) -> tuple[str, str]:
@@ -286,7 +524,8 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
     width = 1400
     margin = 56
     gap = 24
-    card_w = (width - margin * 2 - gap) // 2
+    left_w = 430
+    right_w = width - margin * 2 - gap - left_w
 
     title_font = ImageFont.truetype(str(_FONT_BOLD), 52)
     subtitle_font = ImageFont.truetype(str(_FONT_REGULAR), 25)
@@ -297,30 +536,11 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
     body_font = ImageFont.truetype(str(_FONT_REGULAR), 24)
     small_font = ImageFont.truetype(str(_FONT_BOLD), 19)
 
-    section_order = ["Network", "Security", "Docker", "Daemons", "System", "Weekly Auto-Blocks"]
-    present_sections = [(name, parsed.sections[name]) for name in section_order if parsed.sections.get(name)]
-    section_heights: list[int] = []
-
-    scratch = Image.new("RGB", (width, 10), palette["background"])
-    draw = ImageDraw.Draw(scratch)
-    for _name, items in present_sections:
-        lines = 0
-        for item in items:
-            text = item.removeprefix("•").strip()
-            port_match = _PORT_RE.search(text)
-            if port_match:
-                text = port_match.group(2)
-                max_width = card_w - 200
-            else:
-                max_width = card_w - 84
-            lines += len(_wrap_text(draw, text, body_font, max_width))
-        section_heights.append(max(174, 95 + lines * _line_height(draw, body_font, 15)))
-
-    rows = [section_heights[i:i + 2] for i in range(0, len(section_heights), 2)]
-    height = 360 + 240 + sum(max(row) for row in rows) + max(0, len(rows) - 1) * gap + 70
+    height = 1780
 
     image = Image.new("RGB", (width, height), palette["background"])
     draw = ImageDraw.Draw(image)
+    _draw_background(draw, width, height, palette)
 
     # Header.
     header = (margin, 44, width - margin, 296)
@@ -329,6 +549,7 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
     draw.text((margin + 70, 76), "NFT Firewall", font=subtitle_font, fill="#a7c7ff")
     draw.text((margin + 70, 112), "Daily Security Brief", font=title_font, fill="#ffffff")
     draw.text((margin + 74, 184), parsed.timestamp or "Current status report", font=subtitle_font, fill="#d0d5dd")
+    _draw_header_art(draw, header)
 
     status_ok = parsed.status == "HEALTHY"
     pill_fill = palette["status_ok_fill"] if status_ok else palette["status_bad_fill"]
@@ -348,7 +569,7 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
 
     # Metric cards.
     metric_y = 328
-    metric_h = 96
+    metric_h = 112
     metric_gap = 18
     metric_w = (width - margin * 2 - metric_gap * 2) // 3
     for index, (label, value, accent) in enumerate(_metric_rows(parsed)):
@@ -368,16 +589,18 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
         )
 
     # Detail sections.
-    y = metric_y + metric_h * 2 + metric_gap + 42
-    for row_index in range(0, len(present_sections), 2):
-        row_sections = present_sections[row_index:row_index + 2]
-        row_heights = section_heights[row_index:row_index + 2]
-        row_h = max(row_heights)
-        for col, (name, items) in enumerate(row_sections):
-            x1 = margin + col * (card_w + gap)
+    detail_y = metric_y + metric_h * 2 + metric_gap + 42
+    right_x = margin + left_w + gap
+    left_sections = [
+        ("Network", parsed.sections.get("Network", []), 250),
+        ("Security", parsed.sections.get("Security", []), 300),
+    ]
+    y = detail_y
+    for name, items, panel_h in left_sections:
+        if items:
             _draw_section(
-                draw,
-                (x1, y, x1 + card_w, y + row_h),
+                draw=draw,
+                box=(margin, y, margin + left_w, y + panel_h),
                 section=name,
                 items=items,
                 heading_font=section_font,
@@ -385,7 +608,29 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
                 small_font=small_font,
                 palette=palette,
             )
-        y += row_h + gap
+            y += panel_h + gap
+
+    _draw_docker_panel(
+        draw,
+        (right_x, detail_y, width - margin, detail_y + 650),
+        parsed=parsed,
+        heading_font=section_font,
+        body_font=body_font,
+        small_font=small_font,
+        palette=palette,
+    )
+
+    bottom_y = detail_y + 650 + gap
+    _draw_daemons_system_panel(
+        draw,
+        (margin, bottom_y, width - margin, bottom_y + 288),
+        parsed=parsed,
+        heading_font=section_font,
+        body_font=body_font,
+        small_font=small_font,
+        value_font=status_font,
+        palette=palette,
+    )
 
     draw.text(
         (margin, height - 44),
