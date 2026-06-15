@@ -62,6 +62,27 @@ def test_watchdog_unit_uses_privileged_systemctl_wrapper():
     assert "ExecStartPre=-/usr/bin/sudo /usr/bin/systemctl start wg-quick@wg0.service" not in text
 
 
+def test_unit_patching_uses_configured_wireguard_interface(monkeypatch, tmp_path):
+    import setup
+
+    install_dir = tmp_path / "opt" / "nft-firewall"
+    config_dir = install_dir / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "firewall.ini").write_text(
+        "[network]\nvpn_interface = wg-test\n"
+    )
+    monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
+    monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
+
+    patched = setup._patch_unit(
+        "After=network-online.target wg-quick@wg0.service\n"
+        "ExecStartPre=-/usr/bin/sudo /usr/local/lib/nft-firewall/fw-systemctl start wg-quick@wg0.service\n"
+    )
+
+    assert "wg-quick@wg-test.service" in patched
+    assert "wg-quick@wg0.service" not in patched
+
+
 def test_uninstall_flushes_live_ruleset(monkeypatch):
     import setup
 
@@ -419,6 +440,55 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert "--with-integrations" in text
     assert "Skipping optional Cosmos/Keybase hardening" in text
     assert 'if [[ "$RUN_INTEGRATIONS" -eq 1 ]]' in text
+
+
+def test_setup_sh_uses_public_repo_url_by_default():
+    """Public bootstrap must not clone the private/live-history repo by default."""
+    setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
+    text = setup_sh.read_text()
+
+    assert "NFT_FIREWALL_REPO_URL" in text
+    assert "https://github.com/unknown0152/nft-firewall-public.git" in text
+    assert "git clone -q \"$REPO_URL\"" in text
+    assert "git clone -q https://github.com/unknown0152/nft-firewall.git" not in text
+
+
+def test_step7_resolves_endpoint_without_rewriting_wireguard_config(monkeypatch, tmp_path):
+    import socket
+    import setup
+
+    install_dir = tmp_path / "opt" / "nft-firewall"
+    config_dir = install_dir / "config"
+    config_dir.mkdir(parents=True)
+    ini = config_dir / "firewall.ini"
+    ini.write_text(
+        "[network]\n"
+        "vpn_interface = wg-test\n"
+        "vpn_server_ip = vpn.example.test\n"
+    )
+    wg_dir = tmp_path / "etc" / "wireguard"
+    wg_dir.mkdir(parents=True)
+    wg_conf = wg_dir / "wg-test.conf"
+    original = "[Peer]\nEndpoint = vpn.example.test:51820\n"
+    wg_conf.write_text(original)
+
+    calls = []
+    monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
+    monkeypatch.setattr(setup, "_CONF_FILE", ini)
+    monkeypatch.setattr(setup, "Path", lambda value: wg_conf if value == "/etc/wireguard/wg-test.conf" else Path(value))
+    monkeypatch.setattr(socket, "gethostbyname", lambda _host: "203.0.113.10")
+    monkeypatch.setattr(setup, "_run", lambda cmd, **_kw: calls.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})())
+    monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_info", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
+
+    setup.step7_activate_vpn()
+
+    assert wg_conf.read_text() == original
+    assert "vpn_server_ip = 203.0.113.10" in ini.read_text()
+    assert ["systemctl", "enable", "wg-quick@wg-test"] in calls
+    assert ["systemctl", "restart", "wg-quick@wg-test"] in calls
 
 
 def test_state_dirs_remain_fw_admin_owned(monkeypatch):

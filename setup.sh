@@ -55,7 +55,9 @@ INSTALL_TMP=$(mktemp -d /tmp/nft-firewall-install.XXXXXX)
 echo "[+] Downloading full installer to $INSTALL_TMP..."
 
 # 3. Clone repository
-git clone -q https://github.com/unknown0152/nft-firewall.git "$INSTALL_TMP"
+REPO_URL="${NFT_FIREWALL_REPO_URL:-https://github.com/unknown0152/nft-firewall-public.git}"
+echo "[+] Using repository: $REPO_URL"
+git clone -q "$REPO_URL" "$INSTALL_TMP"
 
 # 4. Run the full installer logic
 cd "$INSTALL_TMP"

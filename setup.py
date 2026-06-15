@@ -919,10 +919,19 @@ def _read_install_config() -> configparser.ConfigParser:
     return cfg
 
 
+def _configured_vpn_interface(default: str = "wg0") -> str:
+    """Return the configured WireGuard interface name for installer actions."""
+    cfg = _read_install_config()
+    vpn_if = cfg.get("network", "vpn_interface", fallback=default).strip() or default
+    if not re.match(r"^[A-Za-z0-9_.:-]+$", vpn_if):
+        _warn(f"Invalid vpn_interface {vpn_if!r}; falling back to {default}")
+        return default
+    return vpn_if
+
+
 def _wireguard_runtime_ready() -> bool:
     """Return True when watchdog can reasonably start during install."""
-    cfg = _read_install_config()
-    vpn_if = cfg.get("network", "vpn_interface", fallback="wg0").strip() or "wg0"
+    vpn_if = _configured_vpn_interface()
     wg_conf = Path(f"/etc/wireguard/{vpn_if}.conf")
     if not wg_conf.exists():
         _warn(f"Skipping nft-watchdog.service: {wg_conf} is missing")
@@ -1064,11 +1073,13 @@ _PATCHES: List[Tuple[str, str]] = [
 
 def _patch_unit(content: str) -> str:
     """Apply all layout patches to a systemd unit file, line by line."""
+    vpn_if = _configured_vpn_interface()
     out_lines = []
     for line in content.splitlines(keepends=True):
         stripped = line.rstrip("\n")
         for pattern, replacement in _PATCHES:
             stripped = re.sub(pattern, replacement, stripped)
+        stripped = stripped.replace("wg-quick@wg0", f"wg-quick@{vpn_if}")
         out_lines.append(stripped + ("\n" if line.endswith("\n") else ""))
     return "".join(out_lines)
 
@@ -1168,19 +1179,21 @@ def step6_reload_and_restart() -> None:
 # ── Step 7: VPN Activation ────────────────────────────────────────────────────
 
 def step7_activate_vpn() -> None:
-    """If wg0.conf exists, enable and start wg-quick@wg0.service."""
+    """If the configured WireGuard profile exists, enable and start it."""
     _header("Step 7 — VPN Activation")
 
     # Redundant reload to force systemd to see wg-quick template from newly installed package
     _run(["systemctl", "daemon-reload"], check=False)
 
-    wg_conf = Path("/etc/wireguard/wg0.conf")
+    vpn_if = _configured_vpn_interface()
+    wg_conf = Path(f"/etc/wireguard/{vpn_if}.conf")
     if not wg_conf.exists():
-        _info("No /etc/wireguard/wg0.conf found — skipping auto-start")
+        _info(f"No {wg_conf} found — skipping auto-start")
         return
 
     # DNS Resolution Safety: If the config uses a hostname, resolve it now
-    # while the network is still open.
+    # while the network is still open.  Do not rewrite the operator's
+    # WireGuard profile; keep the resolved IP only in firewall.ini.
     try:
         content = wg_conf.read_text()
         m = re.search(r"Endpoint\s*=\s*([^:\s]+)", content)
@@ -1201,36 +1214,20 @@ def step7_activate_vpn() -> None:
                         with _CONF_FILE.open("w") as f:
                             cp.write(f)
                         _ok("Updated firewall.ini with resolved IP")
-                    
-                    # 2. Update wg0.conf (The Critical Fix)
-                    # Replacing hostname with IP in the actual WireGuard config prevents DNS-lookup hangs.
-                    if wg_conf.exists():
-                        try:
-                            conf_data = wg_conf.read_text()
-                            # Replace host only, keep port
-                            new_conf = re.sub(
-                                r"(?i)(Endpoint\s*=\s*)" + re.escape(host),
-                                rf"\g<1>{ip}",
-                                conf_data
-                            )
-                            if new_conf != conf_data:
-                                wg_conf.write_text(new_conf)
-                                _ok(f"Patched {wg_conf} with raw IP for DNS-free startup")
-                        except Exception as patch_err:
-                            _warn(f"Failed to patch {wg_conf}: {patch_err}")
 
                 except Exception as e:
                     _warn(f"Could not resolve {host}: {e}. VPN may fail to start.")
     except Exception:
         pass
 
-    _info("Found wg0.conf — enabling wg-quick@wg0.service ...")
-    _run(["systemctl", "enable", "wg-quick@wg0"], check=False)
-    r = _run(["systemctl", "restart", "wg-quick@wg0"], check=False)
+    unit = f"wg-quick@{vpn_if}"
+    _info(f"Found {wg_conf} — enabling {unit}.service ...")
+    _run(["systemctl", "enable", unit], check=False)
+    r = _run(["systemctl", "restart", unit], check=False)
     if r.returncode == 0:
-        _ok("wg-quick@wg0.service started")
+        _ok(f"{unit}.service started")
     else:
-        _warn(f"Failed to start wg-quick@wg0: {r.stderr.strip()}")
+        _warn(f"Failed to start {unit}: {r.stderr.strip()}")
 
 
 # ── Sub-commands ──────────────────────────────────────────────────────────────
