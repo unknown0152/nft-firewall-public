@@ -80,6 +80,8 @@ class _SystemStats:
     cpu: str
     ram: str
     disk: str
+    disk_label: str
+    disk_percent: int | None
     ram_ratio: float
     disk_ratio: float
     load_ratio: float
@@ -169,6 +171,7 @@ def _port_rows(parsed: _Report) -> list[_PortRow]:
             scope, service = [part.strip() for part in detail.split("—", 1)]
         else:
             scope, service = "Unknown", detail.strip()
+        service = re.sub(r"\s+from\s+(?:LAN|VPN)\b", "", service, flags=re.IGNORECASE)
         rows.append(_PortRow(port=port, scope=scope, service=service))
     return rows
 
@@ -192,14 +195,22 @@ def _system_stats(parsed: _Report) -> _SystemStats:
             ram_ratio = min(used / total, 1.0)
 
     disk_ratio = 0.0
+    disk_percent = None
+    disk_label = disk
     disk_match = re.search(r"(\d+)%", disk)
     if disk_match:
-        disk_ratio = min(int(disk_match.group(1)) / 100.0, 1.0)
+        disk_percent = int(disk_match.group(1))
+        disk_ratio = min(disk_percent / 100.0, 1.0)
+        mount_match = re.search(r"(.+?)\s+is\s+\d+%\s+full", disk)
+        mount = mount_match.group(1).strip() if mount_match else "disk"
+        disk_label = "Root used" if mount == "/" else f"{mount} used"
 
     return _SystemStats(
         cpu=cpu,
         ram=ram,
         disk=disk,
+        disk_label=disk_label,
+        disk_percent=disk_percent,
         ram_ratio=ram_ratio,
         disk_ratio=disk_ratio,
         load_ratio=load_ratio,
@@ -432,18 +443,25 @@ def _draw_daemons_system_panel(
         _draw_progress_bar(draw, (bar_x, label_y + 36, bar_x + 540, label_y + 62), ratio=ratio, fill=accent, track=track)
         label_y += 92
 
-    disk_box = (x2 - 172, y1 + 82, x2 - 56, y1 + 198)
+    disk_box = (x2 - 184, y1 + 74, x2 - 44, y1 + 214)
+    disk_text = f"{stats.disk_percent}%" if stats.disk_percent is not None else "—"
     _draw_donut(
         draw,
         disk_box,
         ratio=stats.disk_ratio,
         fill="#34c759",
         track=track,
-        text=f"{int(stats.disk_ratio * 100)}%",
+        text=disk_text,
         font=value_font,
         palette=palette,
     )
-    draw.text((x2 - 172, y1 + 220), f"Disk: {stats.disk}", font=body_font, fill=palette["text"])
+    label = "Disk"
+    detail = stats.disk_label
+    label_bbox = draw.textbbox((0, 0), label, font=small_font)
+    detail_bbox = draw.textbbox((0, 0), detail, font=body_font)
+    disk_center = (disk_box[0] + disk_box[2]) // 2
+    draw.text((disk_center - (label_bbox[2] - label_bbox[0]) // 2, y1 + 226), label, font=small_font, fill=palette["muted"])
+    draw.text((disk_center - (detail_bbox[2] - detail_bbox[0]) // 2, y1 + 254), detail, font=body_font, fill=palette["text"])
 
 
 def _section_title(section: str) -> tuple[str, str]:
