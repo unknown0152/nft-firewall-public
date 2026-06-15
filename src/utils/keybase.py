@@ -26,10 +26,11 @@ Config is read from (in order):
 
 import configparser
 import pwd
+import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 
 # ── Config paths ──────────────────────────────────────────────────────────────
 
@@ -38,6 +39,8 @@ _LOCAL_CONF   = _PROJECT_ROOT / "config" / "firewall.ini"
 _SYSTEM_CONF  = Path("/etc/nft-watchdog.conf")
 
 _RETRY_DELAYS: Tuple[int, ...] = (0, 3, 8)
+_ROUTED_TEAM_CHANNELS: Tuple[str, ...] = ("general", "vpn-down", "vpn-up", "ssh")
+_CHANNEL_LINE_RE = re.compile(r"^#([A-Za-z0-9][A-Za-z0-9_-]*)\b")
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
@@ -103,7 +106,7 @@ def _detect_linux_user(cfg: configparser.ConfigParser) -> str:
     return "nobody"
 
 
-def _channel_for_tags(tags: str, title: str) -> str:
+def _channel_for_tags(tags: str, title: str, default_channel: str = "general") -> str:
     """Route a notification to the appropriate Keybase channel based on tags/title."""
     tags_l  = (tags  or "").lower()
     title_l = (title or "").lower()
@@ -115,7 +118,94 @@ def _channel_for_tags(tags: str, title: str) -> str:
         return "vpn-up"
     if "ssh" in title_l or "login" in title_l:
         return "ssh"
-    return "general"
+    return default_channel or "general"
+
+
+def _notification_icon(tags: str, title: str, priority: str) -> str:
+    """Return a compact status icon for Keybase notification headings."""
+    tags_l = (tags or "").lower()
+    text_l = f"{title or ''} {priority or ''}".lower()
+
+    if "rotating_light" in tags_l or "sos" in tags_l or "down" in text_l:
+        return "🚨"
+    if "white_check_mark" in tags_l or "restored" in text_l or "recovered" in text_l:
+        return "✅"
+    if "ssh" in text_l or "login" in text_l:
+        return "🔐"
+    if "high" in text_l or "warning" in text_l:
+        return "⚠️"
+    return "🛡️"
+
+
+def _format_message(title: str, body: str, tags: str, priority: str, channel: str) -> str:
+    """Build a compact notification that reads cleanly in Keybase chat."""
+    clean_title = (title or "nft-firewall").strip()
+    clean_body = (body or "").strip() or "(no details)"
+    priority_label = (priority or "default").strip().upper()
+    icon = _notification_icon(tags, clean_title, priority_label)
+
+    return (
+        f"{icon} **{clean_title}**\n"
+        f"{clean_body}\n\n"
+        f"`#{channel}` · `{priority_label}`"
+    )
+
+
+def _team_channels(default_channel: str) -> Tuple[str, ...]:
+    """Return the team channels nft-firewall may route notifications to."""
+    channels: List[str] = []
+    for channel in (*_ROUTED_TEAM_CHANNELS, default_channel or "general"):
+        normalized = channel.strip()
+        if normalized and normalized not in channels:
+            channels.append(normalized)
+    return tuple(channels)
+
+
+def _parse_list_channels(output: str) -> Set[str]:
+    """Parse `keybase chat list-channels` text output."""
+    channels: Set[str] = set()
+    for line in (output or "").splitlines():
+        match = _CHANNEL_LINE_RE.match(line.strip())
+        if match:
+            channels.add(match.group(1))
+    return channels
+
+
+def _ensure_team_channels(sudo_prefix: Sequence[str], team: str, default_channel: str) -> None:
+    """Best-effort creation of team channels used by notification routing.
+
+    Channel provisioning must never block or fail the notification path. If the
+    Keybase account lacks permission, the send attempt still decides the final
+    result and logs the actionable error.
+    """
+    desired = _team_channels(default_channel)
+    list_cmd = [*sudo_prefix, "chat", "list-channels", team]
+
+    try:
+        result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=20)
+    except Exception as exc:
+        print(f"[keybase] WARNING: cannot list team channels for {team!r}: {exc}")
+        return
+
+    if result.returncode != 0:
+        print(f"[keybase] WARNING: cannot list team channels for {team!r}: {result.stderr.strip()}")
+        return
+
+    existing = _parse_list_channels(result.stdout)
+    for channel in desired:
+        if channel in existing:
+            continue
+        create_cmd = [*sudo_prefix, "chat", "create-channel", team, channel]
+        try:
+            created = subprocess.run(create_cmd, capture_output=True, text=True, timeout=20)
+        except Exception as exc:
+            print(f"[keybase] WARNING: cannot create {team}#{channel}: {exc}")
+            continue
+        if created.returncode == 0:
+            print(f"[keybase] OK created team channel: {team}#{channel}")
+            existing.add(channel)
+        else:
+            print(f"[keybase] WARNING: cannot create {team}#{channel}: {created.stderr.strip()}")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -143,9 +233,9 @@ def notify(title: str, body: str, tags: str = "", priority: str = "default") -> 
         print("[keybase] WARNING: Keybase not configured — add [keybase] section to config")
         return False
 
-    team, user, _default_channel = target
-    channel     = _channel_for_tags(tags, title)
-    full_message = f"*{title}*\n{body}"
+    team, user, default_channel = target
+    channel      = _channel_for_tags(tags, title, default_channel)
+    full_message = _format_message(title, body, tags, priority, channel)
 
     kb_user = _detect_linux_user(cfg)
     try:
@@ -163,6 +253,7 @@ def notify(title: str, body: str, tags: str = "", priority: str = "default") -> 
     sudo_prefix = ["sudo", "-u", kb_user, "/usr/local/bin/nft-keybase-notify"]
 
     if team:
+        _ensure_team_channels(sudo_prefix, team, default_channel)
         cmd  = sudo_prefix + ["chat", "send", "--channel", channel, team, full_message]
         dest = f"{team}#{channel}"
     else:
