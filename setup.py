@@ -873,6 +873,46 @@ def _install_keybase_wrapper(kb_user: str) -> None:
     _ok(f"Installed {wrapper}  (HOME={kb_home}, XDG_RUNTIME_DIR=/run/user/{kb_uid})")
 
 
+def _read_install_config() -> configparser.ConfigParser:
+    """Load the installed or local firewall.ini for installer decisions."""
+    cfg = configparser.ConfigParser()
+    for ini_path in (
+        INSTALL_DIR / "config" / "firewall.ini",
+        Path(__file__).resolve().parent / "config" / "firewall.ini",
+    ):
+        if ini_path.exists():
+            cfg.read(str(ini_path))
+            break
+    return cfg
+
+
+def _wireguard_runtime_ready() -> bool:
+    """Return True when watchdog can reasonably start during install."""
+    cfg = _read_install_config()
+    vpn_if = cfg.get("network", "vpn_interface", fallback="wg0").strip() or "wg0"
+    wg_conf = Path(f"/etc/wireguard/{vpn_if}.conf")
+    if not wg_conf.exists():
+        _warn(f"Skipping nft-watchdog.service: {wg_conf} is missing")
+        return False
+    if shutil.which("wg-quick") is None:
+        _warn("Skipping nft-watchdog.service: wg-quick is missing")
+        return False
+    return True
+
+
+def _keybase_chatops_ready() -> bool:
+    """Return True when Keybase-dependent services can start during install."""
+    cfg = _read_install_config()
+    target_user = cfg.get("keybase", "target_user", fallback="").strip()
+    if not target_user or target_user == "your-keybase-username":
+        _warn("Skipping Keybase services: keybase.target_user is not configured")
+        return False
+    if shutil.which("keybase") is None:
+        _warn("Skipping Keybase services: keybase command is missing")
+        return False
+    return True
+
+
 def _write_executable(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
@@ -1058,7 +1098,16 @@ def step6_reload_and_restart() -> None:
     # Short delay to allow systemd to settle (essential for fresh user/unit recognition)
     time.sleep(2)
 
-    for svc in ACTIVE_SERVICES:
+    keybase_ready = _keybase_chatops_ready()
+
+    active_services: List[str] = []
+    if _wireguard_runtime_ready():
+        active_services.append("nft-watchdog")
+    if keybase_ready:
+        active_services.append("nft-listener")
+    active_services.append("nft-ssh-alert")
+
+    for svc in active_services:
         unit = f"{svc}.service"
         _run(["systemctl", "enable", unit], check=False)
         r = _run(["systemctl", "restart", unit], check=False)
@@ -1072,7 +1121,8 @@ def step6_reload_and_restart() -> None:
             )
             _warn(f"{unit} failed to restart:\n{jctl.stdout.strip()}")
 
-    for tmr in TIMERS:
+    timers: List[str] = TIMERS if keybase_ready else []
+    for tmr in timers:
         unit = f"{tmr}.timer"
         _run(["systemctl", "enable", unit], check=False)
         r = _run(["systemctl", "restart", unit], check=False)

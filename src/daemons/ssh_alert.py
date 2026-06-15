@@ -54,7 +54,7 @@ from typing import Dict, Iterator, List, Optional, Set, Tuple
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _LOCAL_CONF   = _PROJECT_ROOT / "config" / "firewall.ini"
 _SYSTEM_CONF  = Path("/etc/nft-watchdog.conf")
-_STATE_DIR    = _PROJECT_ROOT / "state"
+_STATE_DIR    = Path("/var/lib/nft-firewall")
 
 # fw-admin sudoers only permits the fw-nft wrapper, not raw /usr/sbin/nft.
 _FW_NFT_WRAPPER = Path("/usr/local/lib/nft-firewall/fw-nft")

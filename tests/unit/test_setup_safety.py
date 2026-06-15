@@ -208,6 +208,62 @@ def test_preflight_exits_cleanly_when_nft_missing(monkeypatch, tmp_path, capsys)
     assert "nftables" in captured.err
 
 
+def test_step6_skips_optional_services_without_runtime_prereqs(monkeypatch):
+    import setup
+
+    calls = []
+
+    monkeypatch.setattr(
+        setup,
+        "_run",
+        lambda cmd, **_kw: calls.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})(),
+    )
+    monkeypatch.setattr(setup.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(setup, "_wireguard_runtime_ready", lambda: False)
+    monkeypatch.setattr(setup, "_keybase_chatops_ready", lambda: False)
+    monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
+
+    setup.step6_reload_and_restart()
+
+    assert ["systemctl", "daemon-reload"] in calls
+    assert ["systemctl", "enable", "nft-ssh-alert.service"] in calls
+    assert ["systemctl", "restart", "nft-ssh-alert.service"] in calls
+    assert ["systemctl", "enable", "nft-watchdog.service"] not in calls
+    assert ["systemctl", "restart", "nft-watchdog.service"] not in calls
+    assert ["systemctl", "enable", "nft-listener.service"] not in calls
+    assert ["systemctl", "restart", "nft-listener.service"] not in calls
+    assert ["systemctl", "enable", "nft-daily-report.timer"] not in calls
+    assert ["systemctl", "restart", "nft-daily-report.timer"] not in calls
+
+
+def test_step6_starts_optional_services_when_runtime_prereqs_exist(monkeypatch):
+    import setup
+
+    calls = []
+
+    monkeypatch.setattr(
+        setup,
+        "_run",
+        lambda cmd, **_kw: calls.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})(),
+    )
+    monkeypatch.setattr(setup.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(setup, "_wireguard_runtime_ready", lambda: True)
+    monkeypatch.setattr(setup, "_keybase_chatops_ready", lambda: True)
+    monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
+
+    setup.step6_reload_and_restart()
+
+    for unit in ("nft-watchdog.service", "nft-listener.service", "nft-ssh-alert.service"):
+        assert ["systemctl", "enable", unit] in calls
+        assert ["systemctl", "restart", unit] in calls
+    assert ["systemctl", "enable", "nft-daily-report.timer"] in calls
+    assert ["systemctl", "restart", "nft-daily-report.timer"] in calls
+
+
 def test_preflight_passes_on_valid_ruleset(monkeypatch, tmp_path):
     import setup
     import subprocess as _subprocess

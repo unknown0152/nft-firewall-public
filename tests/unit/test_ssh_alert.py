@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'src'))
 from daemons.ssh_alert import (
     _tail_stateful, _load_state, _save_state,
+    _STATE_DIR,
     AUTO_BLOCK_THRESHOLD, AUTO_BLOCK_WINDOW,
     LONG_BLOCK_THRESHOLD, LONG_BLOCK_WINDOW,
     SshAlertDaemon,
@@ -30,6 +31,10 @@ from daemons.ssh_alert import (
 def test_load_state_returns_none_when_missing(tmp_path):
     result = _load_state(tmp_path / "nonexistent.json")
     assert result == (None, 0)
+
+
+def test_default_state_dir_is_runtime_writable_location():
+    assert _STATE_DIR == Path("/var/lib/nft-firewall")
 
 
 # ---------------------------------------------------------------------------
