@@ -434,6 +434,57 @@ def _format_port_list(ports: list[int]) -> str:
     return ", ".join(str(p) for p in ports) if ports else "none"
 
 
+def _port_change_notification(
+    *,
+    port: int | str,
+    label: str,
+    open_port: bool,
+    profile: str,
+    cfg_path: Path,
+    key: str,
+) -> tuple[str, str, str, str]:
+    """Build a Keybase notification for a confirmed live port change."""
+    from utils.validation import validate_port
+
+    port_num = validate_port(port, "port")
+    action = "opened" if open_port else "closed"
+    action_label = "OPENED" if open_port else "CLOSED"
+    title = f"Firewall port {action}"
+    tags = "warning,shield" if open_port else "shield"
+    priority = "high" if open_port else "default"
+    body = (
+        f"{action_label}: {label} port {port_num}\n"
+        f"Profile: {profile}\n"
+        f"Config key: network.{key}\n"
+        f"Config: {cfg_path}\n"
+        "Status: safe-apply confirmed; live rules and persisted ruleset updated."
+    )
+    return title, body, tags, priority
+
+
+def _notify_port_change(
+    *,
+    port: int | str,
+    label: str,
+    open_port: bool,
+    profile: str,
+    cfg_path: Path,
+    key: str,
+) -> bool:
+    """Send a best-effort Keybase alert for a confirmed port change."""
+    from utils.keybase import notify
+
+    title, body, tags, priority = _port_change_notification(
+        port=port,
+        label=label,
+        open_port=open_port,
+        profile=profile,
+        cfg_path=cfg_path,
+        key=key,
+    )
+    return notify(title=title, body=body, tags=tags, priority=priority)
+
+
 def _nftables_service_status() -> tuple[str, str]:
     """Return doctor status for nftables.service boot persistence."""
     import shutil
@@ -639,7 +690,7 @@ def _reapply_geoblocks() -> None:
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
-def _cmd_apply(args: argparse.Namespace) -> None:
+def _cmd_apply(args: argparse.Namespace) -> bool:
     """apply <profile> [--dry-run] [--safe]"""
     import select
     from core.rules import generate_ruleset
@@ -657,7 +708,7 @@ def _cmd_apply(args: argparse.Namespace) -> None:
 
     if args.dry_run:
         print(ruleset)
-        return
+        return False
 
     # Always simulate before touching the live ruleset
     ok, err = state.simulate_apply(ruleset)
@@ -700,12 +751,14 @@ def _cmd_apply(args: argparse.Namespace) -> None:
             print("[ok] CONFIRMED — new rules are now permanent.")
             _write_watchdog_markers(ruleset_cfg)
             _reapply_geoblocks()
+            return True
         else:
             print("[warn] Not confirmed — rolling back ...", file=sys.stderr)
             if backup_path is not None:
                 try:
                     state.restore_ruleset(backup_path)
                     print("[ok] Rollback complete.")
+                    return False
                 except RuntimeError as exc:
                     _die(f"Rollback failed: {exc}")
             else:
@@ -713,13 +766,14 @@ def _cmd_apply(args: argparse.Namespace) -> None:
     else:
         _write_watchdog_markers(ruleset_cfg)
         _reapply_geoblocks()
+        return True
 
 
-def _cmd_safe_apply(args: argparse.Namespace) -> None:
+def _cmd_safe_apply(args: argparse.Namespace) -> bool:
     """safe-apply <profile> — apply with mandatory rollback confirmation."""
     args.safe = True
     args.dry_run = False
-    _cmd_apply(args)
+    return _cmd_apply(args)
 
 
 def _cmd_simulate(args: argparse.Namespace) -> None:
@@ -1538,7 +1592,19 @@ def _menu_port_manager() -> None:
         )
         if apply_now.lower() == "yes":
             print("\n  \033[33mSafe apply will roll back live rules unless you type CONFIRM.\033[0m")
-            _cmd_safe_apply(argparse.Namespace(profile=profile))
+            applied = _cmd_safe_apply(argparse.Namespace(profile=profile))
+            if changed and applied:
+                if _notify_port_change(
+                    port=raw,
+                    label=label,
+                    open_port=open_port,
+                    profile=profile,
+                    cfg_path=cfg_path,
+                    key=key,
+                ):
+                    print("  \033[32m✓\033[0m Keybase notification sent.")
+                else:
+                    print("  \033[33m!\033[0m Keybase notification failed; port change is still applied.")
         else:
             print("  \033[90mConfig changed only. Live rules are unchanged until safe-apply runs.\033[0m")
         _wait_for_any_key()

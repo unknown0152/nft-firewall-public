@@ -86,3 +86,39 @@ def test_change_config_port_rejects_unknown_config_key(tmp_path):
 
     with pytest.raises(ValueError, match="unsupported port list"):
         main._change_config_port(config, "ssh_port", "2222", open_port=True)
+
+
+def test_port_change_notification_for_opened_port(tmp_path):
+    title, body, tags, priority = main._port_change_notification(
+        port="8443",
+        label="VPN TCP",
+        open_port=True,
+        profile="cosmos-vpn-secure",
+        cfg_path=tmp_path / "firewall.ini",
+        key="extra_ports",
+    )
+
+    assert title == "Firewall port opened"
+    assert "OPENED: VPN TCP port 8443" in body
+    assert "Profile: cosmos-vpn-secure" in body
+    assert "Config key: network.extra_ports" in body
+    assert "safe-apply confirmed" in body
+    assert tags == "warning,shield"
+    assert priority == "high"
+
+
+def test_port_change_notification_for_closed_port(tmp_path):
+    title, body, tags, priority = main._port_change_notification(
+        port=7359,
+        label="LAN UDP",
+        open_port=False,
+        profile="cosmos-vpn-secure",
+        cfg_path=tmp_path / "firewall.ini",
+        key="lan_allow_udp_ports",
+    )
+
+    assert title == "Firewall port closed"
+    assert "CLOSED: LAN UDP port 7359" in body
+    assert "Config key: network.lan_allow_udp_ports" in body
+    assert tags == "shield"
+    assert priority == "default"
