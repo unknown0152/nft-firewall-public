@@ -54,3 +54,31 @@ def test_contains_daemons_section(tmp_path, monkeypatch):
     from utils.formatter import build_status_report
     result = build_status_report(_make_ini(tmp_path))
     assert "Daemons" in result or "Watchdog" in result
+
+
+def test_report_uses_brief_header(tmp_path, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: MagicMock(returncode=0, stdout="", stderr=""))
+    from utils.formatter import build_status_report
+    result = build_status_report(_make_ini(tmp_path))
+    assert "Good Morning — Firewall Brief" in result
+
+
+def test_firewall_open_ports_report_vpn_and_lan_scopes(tmp_path):
+    ini = tmp_path / "firewall.ini"
+    ini.write_text(
+        "[network]\n"
+        "extra_ports = 80, 443\n"
+        "lan_allow_ports = 58473, 8096\n"
+        "lan_allow_udp_ports = 7359\n"
+        "torrent_port = 64279\n"
+    )
+
+    from utils.formatter import _firewall_open_ports
+
+    ports = _firewall_open_ports(str(ini))
+    assert (80, "tcp", "VPN") in ports
+    assert (443, "tcp", "VPN") in ports
+    assert (58473, "tcp", "LAN") in ports
+    assert (7359, "udp", "LAN") in ports
+    assert (64279, "tcp", "VPN") in ports
+    assert (64279, "udp", "VPN") in ports

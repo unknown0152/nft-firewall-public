@@ -95,7 +95,7 @@ def _docker_running() -> str:
         return f"🔴 {str(e)[:20]}"
 
 
-def _exposed_ports() -> str:
+def _exposed_ports(cfg_path: Optional[str] = None) -> str:
     """Return summary of exposed ports from both Docker registry and firewall.ini."""
     try:
         _root = Path(__file__).resolve().parent.parent.parent
@@ -106,11 +106,11 @@ def _exposed_ports() -> str:
         seen: set = set()
         parts: List[str] = []
 
-        for port, proto, _scope in _firewall_open_ports():
+        for port, proto, scope in _firewall_open_ports(cfg_path):
             key = (port, proto)
             if key not in seen:
                 seen.add(key)
-                parts.append(f"{port}/{proto}(pub)")
+                parts.append(f"{port}/{proto}({scope})")
 
         for e in list_exposed():
             key = (e["host_port"], e["proto"])
@@ -166,16 +166,31 @@ def _disk_space() -> str:
         return "—"
 
 
-def _firewall_open_ports() -> List[Tuple[int, str, str]]:
+def _parse_ports(raw: str) -> List[int]:
+    """Parse a comma-separated port list without raising on malformed entries."""
+    ports: List[int] = []
+    for item in raw.split(","):
+        port = item.strip()
+        if port.isdigit():
+            ports.append(int(port))
+    return ports
+
+
+def _firewall_open_ports(cfg_path: Optional[str] = None) -> List[Tuple[int, str, str]]:
     """Return (port, proto, scope) tuples from firewall.ini [network] section."""
     import configparser as _cp
     result: List[Tuple[int, str, str]] = []
     _root = Path(__file__).resolve().parent.parent.parent
-    for ini in (
+    candidates: List[Path] = []
+    if cfg_path:
+        candidates.append(Path(cfg_path))
+    candidates.extend([
         _root / "config" / "firewall.ini",
         Path("/opt/nft-firewall/config/firewall.ini"),
         Path("/etc/nft-watchdog.conf"),
-    ):
+    ])
+
+    for ini in candidates:
         try:
             exists = ini.exists()
         except OSError:
@@ -183,33 +198,36 @@ def _firewall_open_ports() -> List[Tuple[int, str, str]]:
         if exists:
             cfg = _cp.ConfigParser()
             cfg.read(str(ini))
-            for raw in cfg.get("network", "extra_ports", fallback="").split(","):
-                p = raw.strip()
-                if p.isdigit():
-                    result.append((int(p), "tcp", "public"))
+            for port in _parse_ports(cfg.get("network", "extra_ports", fallback="")):
+                result.append((port, "tcp", "VPN"))
+            for port in _parse_ports(cfg.get("network", "lan_allow_ports", fallback="")):
+                result.append((port, "tcp", "LAN"))
+            for port in _parse_ports(cfg.get("network", "lan_allow_udp_ports", fallback="")):
+                result.append((port, "udp", "LAN"))
             tp = cfg.get("network", "torrent_port", fallback="").strip()
             if tp.isdigit():
-                result.append((int(tp), "tcp", "public"))
-                result.append((int(tp), "udp", "public"))
+                result.append((int(tp), "tcp", "VPN"))
+                result.append((int(tp), "udp", "VPN"))
             break
     return result
 
 
-def _exposed_port_lines() -> List[str]:
-    """Return one indented line per exposed port, with 🏠/🌍 icons.
+def _exposed_port_lines(cfg_path: Optional[str] = None) -> List[str]:
+    """Return one line per exposed port, with scope-aware icons.
 
-    Merges Docker registry entries (🏠 LAN) with firewall.ini open ports (🌍 public).
+    Merges Docker registry entries with firewall.ini open ports.
     Deduplicates by (port, proto).
     """
     lines: List[str] = []
     seen: set = set()
 
-    # Firewall.ini ports — always public
-    for port, proto, _scope in _firewall_open_ports():
+    # Firewall.ini ports
+    for port, proto, scope in _firewall_open_ports(cfg_path):
         key = (port, proto)
         if key not in seen:
             seen.add(key)
-            lines.append(f"    🌍  `{port}/{proto}`  public")
+            icon = "🏠" if scope == "LAN" else "🛰️"
+            lines.append(f"{icon} `{port}/{proto}`  {scope}")
 
     # Docker registry ports
     try:
@@ -226,11 +244,11 @@ def _exposed_port_lines() -> List[str]:
             lan = src not in ("any", "", None)
             icon  = "🏠" if lan else "🌍"
             label = "LAN" if lan else "public"
-            lines.append(f"    {icon}  `{e['host_port']}/{e['proto']}`  {label}")
+            lines.append(f"{icon} `{e['host_port']}/{e['proto']}`  {label}")
     except Exception:
         pass
 
-    return lines if lines else ["    none"]
+    return lines if lines else ["none"]
 
 
 # ── Main builder ──────────────────────────────────────────────────────────────
@@ -335,42 +353,47 @@ def build_status_report(cfg_path: Optional[str] = None,
     ls_ok = _svc_status('nft-listener').startswith("🟢")
     sa_ok = _svc_status('nft-ssh-alert').startswith("🟢")
 
+    health_line = f"{overall_icon} *{overall}*"
+    if overall != "HEALTHY" and reason:
+        health_line += f"\n`{reason}`"
+
     # ── Assemble ──────────────────────────────────────────────────────────────
     lines = [
-        f"☀️ *Good Morning*  _{now}_",
-        f"━━━━━━━━━━━━━━━━━━━━",
-        f"{overall_icon} *{overall}*" + (f"  _{reason}_" if overall != "HEALTHY" and reason else ""),
-        f"━━━━━━━━━━━━━━━━━━━━",
+        f"☀️ *Good Morning — Firewall Brief*",
+        f"`{now}`",
         f"",
-        f"🌐  *Network*",
-        f"    📡  VPN  {_ok(vpn_up)} `{vpn_ip}`",
-        f"    🤝  Handshake  {_fmt_age(handshake)}",
+        health_line,
         f"",
-        f"🔒  *Security*",
-        f"    🛡️  Killswitch  {_ok(ks_active)} {'Active' if ks_active else 'MISSING'}",
-        f"    📋  NFT Rules  {_ok(nft_ok)} {'Intact' if nft_ok else 'ERROR'}",
-        f"    🚫  Block list  {_blocked_geo_summary()}",
-        f"    🛑  Denied  {_killswitch_packets()}",
+        f"🌐 *Network*",
+        f"• VPN: {_ok(vpn_up)} `{vpn_ip}`",
+        f"• Handshake: {_fmt_age(handshake)}",
         f"",
-        f"🐳  *Docker*  {_docker_running()}",
-        f"    📦  Exposed",
-        *[f"    {l.strip()}" for l in _exposed_port_lines()],
+        f"🔒 *Security*",
+        f"• Killswitch: {_ok(ks_active)} {'Active' if ks_active else 'MISSING'}",
+        f"• NFT rules: {_ok(nft_ok)} {'Intact' if nft_ok else 'ERROR'}",
+        f"• Block list: {_blocked_geo_summary()}",
+        f"• Denied: {_killswitch_packets()}",
         f"",
-        f"⚙️  *Daemons*",
-        f"    {'🟢' if wd_ok else '🔴'}  Watchdog",
-        f"    {'🟢' if ls_ok else '🔴'}  Listener",
-        f"    {'🟢' if sa_ok else '🔴'}  SSH Alert",
+        f"🐳 *Docker*",
+        f"• Runtime: {_docker_running()}",
+        f"• Exposed ports:",
+        *[f"  {line}" for line in _exposed_port_lines(cfg_path)],
         f"",
-        f"🖥️  *System*",
-        f"    ⚡  CPU  {_cpu_load()}",
-        f"    🧠  RAM  {_ram_usage()}",
-        f"    💾  Disk  {_disk_space()}",
+        f"⚙️ *Daemons*",
+        f"• {'🟢' if wd_ok else '🔴'} Watchdog",
+        f"• {'🟢' if ls_ok else '🔴'} Listener",
+        f"• {'🟢' if sa_ok else '🔴'} SSH Alert",
+        f"",
+        f"🖥️ *System*",
+        f"• CPU: {_cpu_load()}",
+        f"• RAM: {_ram_usage()}",
+        f"• Disk: {_disk_space()}",
     ]
 
     if weekly:
         lines += [
             f"",
-            f"📊  *Weekly Auto-Blocks*",
+            f"📊 *Weekly Auto-Blocks*",
             _weekly_summary(),
         ]
 

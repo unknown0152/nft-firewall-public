@@ -53,6 +53,7 @@ class TestFwWrapperAllowlist:
         "block", "unblock", "allow", "disallow",
         "ip-list", "status", "health", "rules",
         "doctor", "simulate", "safe-apply", "profiles",
+        "firewall-report",
     }
 
     MUST_NOT_BE_ALLOWED = {
