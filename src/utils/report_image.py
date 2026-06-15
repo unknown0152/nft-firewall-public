@@ -129,7 +129,7 @@ def _metric_rows(parsed: _Report) -> list[tuple[str, str, str]]:
         ("Killswitch", _first_value(security, "Killswitch"), "#ff9f0a"),
         ("NFT rules", _first_value(security, "NFT rules"), "#5856d6"),
         ("Docker", _first_value(docker, "Runtime"), "#32ade6"),
-        ("Denied", _first_value(security, "Denied", "0 packets denied"), "#ff453a"),
+        ("Drops", _first_value(security, "Firewall drops", "0 packets denied"), "#ff453a"),
     ]
 
 

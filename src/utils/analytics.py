@@ -249,14 +249,26 @@ def chain_drop_counter(chain: str) -> int:
     Requires the V11.0 ruleset (rules.py adds ``counter`` to the log lines).
     Returns 0 if the counter is absent or the chain cannot be read.
     """
+    prefixes = {
+        "input": "[nft-in-drop] ",
+        "output": "[nft-out-drop] ",
+        "forward": "[nft-fwd-drop] ",
+    }
+    prefix = prefixes.get(chain)
+    if prefix is None:
+        return 0
+
     try:
         r = subprocess.run(
             _sudo_nft_args("list", "chain", "ip", "firewall", chain),
             capture_output=True, text=True, timeout=5,
         )
-        # The log/drop rule is always the last non-empty rule;
-        # its counter appears as: counter packets N bytes M
-        m = re.search(r"counter packets (\d+)", r.stdout)
+        if r.returncode != 0:
+            return 0
+        m = re.search(
+            r'counter packets (\d+) bytes \d+ log prefix "' + re.escape(prefix) + r'"',
+            r.stdout,
+        )
         return int(m.group(1)) if m else 0
     except Exception:
         return 0
@@ -264,21 +276,11 @@ def chain_drop_counter(chain: str) -> int:
 
 def total_drop_packets() -> int:
     """Return total DROP packet count across input + output + forward chains.
-    
-    Uses a single nft call to list the entire table for better performance.
+
+    The restricted nft wrapper allows per-chain reads but intentionally rejects
+    broad table dumps, so sum the explicit drop-log counters per chain.
     """
-    try:
-        r = subprocess.run(
-            _sudo_nft_args("list", "table", "ip", "firewall"),
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode != 0:
-            return 0
-        # Sum all 'counter packets N' occurrences in the entire table
-        counts = re.findall(r"counter packets (\d+)", r.stdout)
-        return sum(int(n) for n in counts)
-    except Exception:
-        return 0
+    return sum(chain_drop_counter(chain) for chain in ("input", "output", "forward"))
 
 
 # ── Weekly ban summary ────────────────────────────────────────────────────────
