@@ -21,7 +21,9 @@ test = [
   "pytest-cov>=5",
   "hypothesis>=6",
 ]
-keybase = []
+keybase = [
+  "Pillow>=10",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]

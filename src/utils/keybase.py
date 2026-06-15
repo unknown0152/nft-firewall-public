@@ -277,3 +277,66 @@ def notify(title: str, body: str, tags: str = "", priority: str = "default") -> 
 
     print(f"[keybase] WARNING: all 3 attempts failed for: {title!r}")
     return False
+
+
+def upload_file(
+    file_path: str | Path,
+    *,
+    title: str,
+    tags: str = "",
+    priority: str = "default",
+) -> bool:
+    """Upload a file attachment to the configured Keybase target."""
+    cfg = _load_config()
+    target = _detect_target(cfg)
+
+    if target is None:
+        print("[keybase] WARNING: Keybase not configured — add [keybase] section to config")
+        return False
+
+    path = Path(file_path)
+    if not path.exists():
+        print(f"[keybase] WARNING: attachment does not exist: {path}")
+        return False
+
+    team, user, default_channel = target
+    channel = _channel_for_tags(tags, title, default_channel)
+
+    kb_user = _detect_linux_user(cfg)
+    try:
+        pwd.getpwnam(kb_user)
+    except KeyError:
+        print(f"[keybase] WARNING: cannot look up Linux user '{kb_user}'")
+        return False
+
+    sudo_prefix = ["sudo", "-u", kb_user, "/usr/local/bin/nft-keybase-notify"]
+
+    if team:
+        _ensure_team_channels(sudo_prefix, team, default_channel)
+        cmd = sudo_prefix + [
+            "chat",
+            "upload",
+            "--channel",
+            channel,
+            "--title",
+            title,
+            team,
+            str(path),
+        ]
+        dest = f"{team}#{channel}"
+    else:
+        cmd = sudo_prefix + ["chat", "upload", "--title", title, user, str(path)]
+        dest = user
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except Exception as exc:
+        print(f"[keybase] WARNING: upload exception: {exc}")
+        return False
+
+    if result.returncode == 0:
+        print(f"[keybase] OK uploaded → {dest}: {title!r}")
+        return True
+
+    print(f"[keybase] WARNING: upload failed: {result.stderr.strip()}")
+    return False

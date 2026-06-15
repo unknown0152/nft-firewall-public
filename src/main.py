@@ -1377,6 +1377,29 @@ def _cmd_firewall_report(args: argparse.Namespace) -> None:
     if not ok:
         _die("Report built but Keybase notification failed — check [keybase] config.")
 
+    if getattr(args, "image", False):
+        from utils.keybase import upload_file
+        from utils.report_image import render_report_png
+
+        try:
+            image_path = render_report_png(report)
+        except RuntimeError as exc:
+            _die(str(exc))
+
+        print(f"[report] Image rendered: {image_path}")
+        uploaded = upload_file(
+            image_path,
+            title="NFT Firewall Daily Report",
+            tags="shield",
+            priority="default",
+        )
+        try:
+            image_path.unlink()
+        except OSError:
+            pass
+        if not uploaded:
+            _die("Report text sent but image upload failed — check Keybase upload support.")
+
 
 def _cmd_maintenance(_args: argparse.Namespace) -> None:
     """maintenance — prune old state backups and rotated project log files."""
@@ -1924,6 +1947,8 @@ Quick-start workflow:
     frp = sub.add_parser("firewall-report",  help="Build status report and send it to Keybase (for daily cron)")
     frp.add_argument("--weekly", action="store_true",
                      help="Include weekly auto-block summary section")
+    frp.add_argument("--image", action="store_true",
+                     help="Also render and upload a PNG image report to Keybase")
     sub.add_parser("profiles",         help="List available firewall profiles")
     rp = sub.add_parser("rules", help="Print the live nftables ruleset")
     rp.add_argument("--no-sets", action="store_true", help="Remove large elements = { ... } blocks from output")

@@ -71,3 +71,44 @@ def test_format_message_uses_compact_status_layout():
     assert "🔐 **SSH Login**" in message
     assert "Accepted publickey for admin" in message
     assert "`nft-firewall` · `#ssh` · `HIGH` · `" in message
+
+
+def test_upload_file_uses_team_channel_upload(monkeypatch, tmp_path):
+    attachment = tmp_path / "report.png"
+    attachment.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    cfg = keybase.configparser.ConfigParser()
+    cfg["keybase"] = {
+        "team": "ops",
+        "channel": "general",
+        "linux_user": "botuser",
+    }
+    monkeypatch.setattr(keybase, "_load_config", lambda: cfg)
+    monkeypatch.setattr(keybase, "_detect_linux_user", lambda _cfg: "botuser")
+    monkeypatch.setattr(keybase.pwd, "getpwnam", lambda _user: object())
+    monkeypatch.setattr(keybase, "_ensure_team_channels", lambda *_args, **_kwargs: None)
+
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(keybase.subprocess, "run", fake_run)
+
+    assert keybase.upload_file(attachment, title="Daily Report", tags="shield")
+
+    assert calls == [[
+        "sudo",
+        "-u",
+        "botuser",
+        "/usr/local/bin/nft-keybase-notify",
+        "chat",
+        "upload",
+        "--channel",
+        "general",
+        "--title",
+        "Daily Report",
+        "ops",
+        str(attachment),
+    ]]
