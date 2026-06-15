@@ -158,12 +158,12 @@ def test_port_change_notification_for_opened_port(tmp_path):
         description="Test dashboard",
     )
 
-    assert title == "Firewall port opened"
-    assert "OPENED: VPN TCP port 8443" in body
-    assert "Description: Test dashboard" in body
-    assert "Profile: cosmos-vpn-secure" in body
-    assert "Config key: network.extra_ports" in body
-    assert "safe-apply confirmed" in body
+    assert title == "Opened firewall access"
+    assert "*Opened* `8443` for *VPN TCP*" in body
+    assert "Service: Test dashboard" in body
+    assert "Profile: `cosmos-vpn-secure`" in body
+    assert "Config: `network.extra_ports`" in body
+    assert "Safe apply confirmed" in body
     assert tags == "warning,shield"
     assert priority == "high"
 
@@ -178,8 +178,9 @@ def test_port_change_notification_for_closed_port(tmp_path):
         key="lan_allow_udp_ports",
     )
 
-    assert title == "Firewall port closed"
-    assert "CLOSED: LAN UDP port 7359" in body
-    assert "Config key: network.lan_allow_udp_ports" in body
+    assert title == "Closed firewall access"
+    assert "*Closed* `7359` for *LAN UDP*" in body
+    assert "Service: not labeled" in body
+    assert "Config: `network.lan_allow_udp_ports`" in body
     assert tags == "shield"
     assert priority == "default"

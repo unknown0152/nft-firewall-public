@@ -529,20 +529,22 @@ def _port_change_notification(
     from utils.validation import validate_port
 
     port_num = validate_port(port, "port")
-    action = "opened" if open_port else "closed"
-    action_label = "OPENED" if open_port else "CLOSED"
-    title = f"Firewall port {action}"
+    action = "Opened" if open_port else "Closed"
+    title = f"{action} firewall access"
     tags = "warning,shield" if open_port else "shield"
     priority = "high" if open_port else "default"
-    body_lines = [f"{action_label}: {label} port {port_num}"]
-    if description:
-        body_lines.append(f"Description: {description}")
-    body_lines.extend([
-        f"Profile: {profile}",
-        f"Config key: network.{key}",
-        f"Config: {cfg_path}",
-        "Status: safe-apply confirmed; live rules and persisted ruleset updated.",
-    ])
+    service = description or "not labeled"
+    body_lines = [
+        f"*{action}* `{port_num}` for *{label}*",
+        "",
+        f"Service: {service}",
+        f"Profile: `{profile}`",
+        f"Config: `network.{key}`",
+        "",
+        "✅ Safe apply confirmed",
+        "Live rules and `/etc/nftables.conf` were updated.",
+        f"`{cfg_path}`",
+    ]
     body = "\n".join(body_lines)
     return title, body, tags, priority
 
