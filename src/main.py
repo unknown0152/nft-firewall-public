@@ -376,6 +376,64 @@ def _validate_config_sanity(cfg: configparser.ConfigParser) -> list[tuple[str, s
     return issues
 
 
+def _read_port_list(cfg: configparser.ConfigParser, key: str) -> list[int]:
+    """Read and validate one [network] port list from config."""
+    from utils.validation import validate_port
+
+    raw = cfg.get("network", key, fallback="").strip()
+    ports = {validate_port(item, f"network.{key}") for item in _split_config_list(raw)}
+    return sorted(ports)
+
+
+def _write_config_atomic(path: Path, cfg: configparser.ConfigParser) -> None:
+    """Write INI config atomically while preserving the existing file mode."""
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o640
+    tmp = path.with_name(f".{path.name}.tmp")
+    with tmp.open("w") as fh:
+        cfg.write(fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def _change_config_port(path: Path, key: str, port: int | str, *, open_port: bool) -> tuple[bool, list[int]]:
+    """Add or remove a port from one [network] config list.
+
+    Returns ``(changed, new_ports)``.
+    """
+    from utils.validation import validate_port
+
+    valid_keys = {"extra_ports", "lan_allow_ports", "lan_allow_udp_ports"}
+    if key not in valid_keys:
+        raise ValueError(f"unsupported port list: {key}")
+
+    port = validate_port(port, "port")
+    cfg = configparser.ConfigParser()
+    if path.exists():
+        cfg.read(str(path))
+    if not cfg.has_section("network"):
+        cfg.add_section("network")
+
+    ports = set(_read_port_list(cfg, key))
+    before = set(ports)
+    if open_port:
+        ports.add(port)
+    else:
+        ports.discard(port)
+
+    changed = ports != before
+    if changed:
+        cfg.set("network", key, ", ".join(str(p) for p in sorted(ports)))
+        _write_config_atomic(path, cfg)
+
+    return changed, sorted(ports)
+
+
+def _format_port_list(ports: list[int]) -> str:
+    return ", ".join(str(p) for p in ports) if ports else "none"
+
+
 def _nftables_service_status() -> tuple[str, str]:
     """Return doctor status for nftables.service boot persistence."""
     import shutil
@@ -1325,12 +1383,13 @@ def _cmd_menu(_args: argparse.Namespace) -> None:
         print()
         print("  \033[34m7.\033[0m  📊 Live Firewall Logs (Activity)")
         print("  \033[34m8.\033[0m  🌍 Geo-Block Manager (by Country)")
+        print("  \033[34m9.\033[0m  🔌 Port Manager (Open / Close)")
         print()
-        print("  \033[34m9.\033[0m  🔄 Restart Firewall Daemons")
+        print("  \033[34mr.\033[0m  🔄 Restart Watchdog")
         print("  \033[34m0.\033[0m  ❌ Exit")
         print()
         
-        choice = _prompt_tty("  Select an option [0-9]: ")
+        choice = _prompt_tty("  Select an option [0-9,r]: ")
 
         if choice == "1":
             _debug_log("Menu: View Status Dashboard")
@@ -1380,6 +1439,9 @@ def _cmd_menu(_args: argparse.Namespace) -> None:
             _debug_log("Menu: Geo-block manager")
             _menu_geoblock(_args)
         elif choice == "9":
+            _debug_log("Menu: Port manager")
+            _menu_port_manager()
+        elif choice.lower() == "r":
             _debug_log("Menu: Restart watchdog")
             print("\n  \033[34m→\033[0m Restarting nft-watchdog...")
             subprocess.run(["sudo", "systemctl", "restart", "nft-watchdog"], capture_output=True)
@@ -1389,6 +1451,97 @@ def _cmd_menu(_args: argparse.Namespace) -> None:
             _debug_log("Menu: Exit")
             print("\033[2J\033[H", end="")
             break
+
+
+def _menu_port_manager() -> None:
+    """Interactive config-backed port manager for the control panel."""
+    options = {
+        "1": ("extra_ports", "VPN TCP", True),
+        "2": ("extra_ports", "VPN TCP", False),
+        "3": ("lan_allow_ports", "LAN TCP", True),
+        "4": ("lan_allow_ports", "LAN TCP", False),
+        "5": ("lan_allow_udp_ports", "LAN UDP", True),
+        "6": ("lan_allow_udp_ports", "LAN UDP", False),
+    }
+
+    while True:
+        cfg_path = _active_config_path()
+        if cfg_path is None:
+            print("\033[2J\033[H", end="")
+            print("  \033[1m🔌 Port Manager\033[0m\n")
+            print("  \033[31mNo firewall config found.\033[0m")
+            _wait_for_any_key()
+            return
+
+        cfg = _load_config()
+        profile = cfg.get("install", "profile", fallback="cosmos-vpn-secure").strip() or "cosmos-vpn-secure"
+
+        try:
+            vpn_tcp = _read_port_list(cfg, "extra_ports")
+            lan_tcp = _read_port_list(cfg, "lan_allow_ports")
+            lan_udp = _read_port_list(cfg, "lan_allow_udp_ports")
+        except ValueError as exc:
+            print("\033[2J\033[H", end="")
+            print("  \033[1m🔌 Port Manager\033[0m\n")
+            print(f"  \033[31mConfig error:\033[0m {exc}")
+            _wait_for_any_key()
+            return
+
+        print("\033[2J\033[H", end="")
+        print("  \033[1m🔌 Port Manager\033[0m")
+        print("  \033[90m──────────────────────────────────────────────────\033[0m")
+        print(f"  Config:  \033[36m{cfg_path}\033[0m")
+        print(f"  Profile: \033[36m{profile}\033[0m")
+        print()
+        print(f"  VPN TCP ports: \033[36m{_format_port_list(vpn_tcp)}\033[0m")
+        print(f"  LAN TCP ports: \033[36m{_format_port_list(lan_tcp)}\033[0m")
+        print(f"  LAN UDP ports: \033[36m{_format_port_list(lan_udp)}\033[0m")
+        print("  \033[90m──────────────────────────────────────────────────\033[0m")
+        print()
+        print("  \033[34m1.\033[0m  Open VPN TCP port")
+        print("  \033[34m2.\033[0m  Close VPN TCP port")
+        print("  \033[34m3.\033[0m  Open LAN TCP port")
+        print("  \033[34m4.\033[0m  Close LAN TCP port")
+        print("  \033[34m5.\033[0m  Open LAN UDP port")
+        print("  \033[34m6.\033[0m  Close LAN UDP port")
+        print()
+        print("  \033[90mVPN TCP means reachable through wg0; LAN means restricted to your LAN CIDR.\033[0m")
+        print("  \033[34m0.\033[0m  Back")
+        print()
+
+        choice = _prompt_tty("  Select an option [0-6]: ")
+        if choice in {"0", "q", "exit"}:
+            return
+        if choice not in options:
+            continue
+
+        key, label, open_port = options[choice]
+        action = "open" if open_port else "close"
+        raw = _prompt_tty(f"\n  Port to {action} for {label} (or 'q' to cancel): ")
+        if not raw or raw.lower() == "q":
+            continue
+
+        try:
+            changed, ports = _change_config_port(cfg_path, key, raw, open_port=open_port)
+        except ValueError as exc:
+            print(f"\n  \033[31m✗\033[0m {exc}")
+            _wait_for_any_key()
+            continue
+
+        if changed:
+            print(f"\n  \033[32m✓\033[0m Updated {key}: {_format_port_list(ports)}")
+        else:
+            print(f"\n  \033[90mNo change; port was already {'present' if open_port else 'absent'}.\033[0m")
+
+        apply_now = _prompt_tty(
+            f"\n  Run safe-apply for profile '{profile}' now? Type 'yes' to continue [no]: "
+        )
+        if apply_now.lower() == "yes":
+            print("\n  \033[33mSafe apply will roll back live rules unless you type CONFIRM.\033[0m")
+            _cmd_safe_apply(argparse.Namespace(profile=profile))
+        else:
+            print("  \033[90mConfig changed only. Live rules are unchanged until safe-apply runs.\033[0m")
+        _wait_for_any_key()
 
 
 def _menu_live_logs() -> None:
