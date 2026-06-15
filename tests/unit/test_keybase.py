@@ -66,4 +66,4 @@ def test_format_message_uses_compact_status_layout():
 
     assert "🔐 **SSH Login**" in message
     assert "Accepted publickey for admin" in message
-    assert "`#ssh` · `HIGH`" in message
+    assert "`nft-firewall` · `#ssh` · `HIGH` · `" in message

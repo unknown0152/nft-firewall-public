@@ -140,14 +140,15 @@ def _notification_icon(tags: str, title: str, priority: str) -> str:
 def _format_message(title: str, body: str, tags: str, priority: str, channel: str) -> str:
     """Build a compact notification that reads cleanly in Keybase chat."""
     clean_title = (title or "nft-firewall").strip()
-    clean_body = (body or "").strip() or "(no details)"
+    clean_body = "\n".join(line.rstrip() for line in (body or "").splitlines()).strip() or "(no details)"
     priority_label = (priority or "default").strip().upper()
     icon = _notification_icon(tags, clean_title, priority_label)
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime())
 
     return (
         f"{icon} **{clean_title}**\n"
-        f"{clean_body}\n\n"
-        f"`#{channel}` · `{priority_label}`"
+        f"`nft-firewall` · `#{channel}` · `{priority_label}` · `{timestamp}`\n\n"
+        f"{clean_body}"
     )
 
 
