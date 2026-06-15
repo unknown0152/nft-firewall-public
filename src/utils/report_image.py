@@ -13,6 +13,43 @@ _FONT_BOLD = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 _MARKUP_RE = re.compile(r"[*_`]")
 _PORT_RE = re.compile(r"`?([^`\s]+/(?:tcp|udp))`?\s+(.+)")
 
+_PALETTES = {
+    "dark": {
+        "background": "#0b1020",
+        "header": "#111827",
+        "header_outline": "#273449",
+        "shadow": "#050814",
+        "card": "#161b2d",
+        "card_outline": "#2a3448",
+        "text": "#f8fafc",
+        "muted": "#aeb7c8",
+        "footer": "#7d89a3",
+        "chip": "#102a46",
+        "chip_text": "#7cc7ff",
+        "status_ok_fill": "#133d2a",
+        "status_ok_text": "#72e6a3",
+        "status_bad_fill": "#4a141b",
+        "status_bad_text": "#ff8a98",
+    },
+    "light": {
+        "background": "#eef2f8",
+        "header": "#101828",
+        "header_outline": "#d9dde6",
+        "shadow": "#dde1ea",
+        "card": "#ffffff",
+        "card_outline": "#d9dde6",
+        "text": "#1d1d1f",
+        "muted": "#6e6e73",
+        "footer": "#667085",
+        "chip": "#eef5ff",
+        "chip_text": "#0066cc",
+        "status_ok_fill": "#163f2a",
+        "status_ok_text": "#7ee2a8",
+        "status_bad_fill": "#4a141b",
+        "status_bad_text": "#ff8a98",
+    },
+}
+
 
 @dataclass(frozen=True)
 class _Report:
@@ -119,10 +156,23 @@ def _line_height(draw, font, padding: int = 10) -> int:
     return bbox[3] - bbox[1] + padding
 
 
-def _draw_shadow_card(draw, box: tuple[int, int, int, int], *, radius: int = 26, fill: str = "#ffffff") -> None:
+def _draw_shadow_card(
+    draw,
+    box: tuple[int, int, int, int],
+    *,
+    palette: dict[str, str],
+    radius: int = 26,
+    fill: str | None = None,
+) -> None:
     x1, y1, x2, y2 = box
-    draw.rounded_rectangle((x1 + 4, y1 + 5, x2 + 4, y2 + 5), radius=radius, fill="#dde1ea")
-    draw.rounded_rectangle(box, radius=radius, fill=fill, outline="#d9dde6", width=1)
+    draw.rounded_rectangle((x1 + 4, y1 + 5, x2 + 4, y2 + 5), radius=radius, fill=palette["shadow"])
+    draw.rounded_rectangle(
+        box,
+        radius=radius,
+        fill=fill or palette["card"],
+        outline=palette["card_outline"],
+        width=1,
+    )
 
 
 def _draw_text_block(draw, text: str, xy: tuple[int, int], *, font, fill: str, max_width: int) -> int:
@@ -142,17 +192,18 @@ def _draw_metric_card(
     accent: str,
     label_font,
     value_font,
+    palette: dict[str, str],
 ) -> None:
     x1, y1, x2, y2 = box
-    _draw_shadow_card(draw, box, radius=22)
+    _draw_shadow_card(draw, box, palette=palette, radius=22)
     draw.rounded_rectangle((x1 + 18, y1 + 18, x1 + 28, y2 - 18), radius=5, fill=accent)
-    draw.text((x1 + 44, y1 + 22), label.upper(), font=label_font, fill="#6e6e73")
+    draw.text((x1 + 44, y1 + 22), label.upper(), font=label_font, fill=palette["muted"])
     _draw_text_block(
         draw,
         value,
         (x1 + 44, y1 + 58),
         font=value_font,
-        fill="#1d1d1f",
+        fill=palette["text"],
         max_width=x2 - x1 - 70,
     )
 
@@ -178,12 +229,13 @@ def _draw_section(
     heading_font,
     body_font,
     small_font,
+    palette: dict[str, str],
 ) -> None:
     x1, y1, x2, y2 = box
     title, accent = _section_title(section)
-    _draw_shadow_card(draw, box, radius=22)
+    _draw_shadow_card(draw, box, palette=palette, radius=22)
     draw.rounded_rectangle((x1 + 22, y1 + 24, x1 + 34, y1 + 58), radius=5, fill=accent)
-    draw.text((x1 + 48, y1 + 20), title, font=heading_font, fill="#1d1d1f")
+    draw.text((x1 + 48, y1 + 20), title, font=heading_font, fill=palette["text"])
 
     y = y1 + 72
     max_width = x2 - x1 - 56
@@ -192,14 +244,14 @@ def _draw_section(
         port_match = _PORT_RE.search(text)
         if port_match:
             port, detail = port_match.groups()
-            draw.rounded_rectangle((x1 + 26, y - 2, x1 + 154, y + 30), radius=10, fill="#eef5ff")
-            draw.text((x1 + 40, y + 2), port, font=small_font, fill="#0066cc")
+            draw.rounded_rectangle((x1 + 26, y - 2, x1 + 154, y + 30), radius=10, fill=palette["chip"])
+            draw.text((x1 + 40, y + 2), port, font=small_font, fill=palette["chip_text"])
             y = _draw_text_block(
                 draw,
                 detail,
                 (x1 + 170, y),
                 font=body_font,
-                fill="#1d1d1f",
+                fill=palette["text"],
                 max_width=max_width - 145,
             )
         else:
@@ -209,13 +261,13 @@ def _draw_section(
                 text,
                 (x1 + 54, y),
                 font=body_font,
-                fill="#1d1d1f",
+                fill=palette["text"],
                 max_width=max_width - 28,
             )
         y += 7
 
 
-def render_report_png(report: str, *, output_path: str | Path | None = None) -> Path:
+def render_report_png(report: str, *, output_path: str | Path | None = None, theme: str = "dark") -> Path:
     """Render a status report string to a PNG file and return its path.
 
     Pillow is intentionally imported lazily so normal text-only operation does
@@ -226,6 +278,9 @@ def render_report_png(report: str, *, output_path: str | Path | None = None) -> 
     except ImportError as exc:  # pragma: no cover - depends on host package set
         raise RuntimeError("Pillow is required for image reports; install python3-pil") from exc
 
+    if theme not in _PALETTES:
+        raise ValueError(f"Unsupported image report theme: {theme}")
+    palette = _PALETTES[theme]
     parsed = _parse_report(report)
 
     width = 1400
@@ -246,7 +301,7 @@ def render_report_png(report: str, *, output_path: str | Path | None = None) -> 
     present_sections = [(name, parsed.sections[name]) for name in section_order if parsed.sections.get(name)]
     section_heights: list[int] = []
 
-    scratch = Image.new("RGB", (width, 10), "#eef2f8")
+    scratch = Image.new("RGB", (width, 10), palette["background"])
     draw = ImageDraw.Draw(scratch)
     for _name, items in present_sections:
         lines = 0
@@ -264,20 +319,20 @@ def render_report_png(report: str, *, output_path: str | Path | None = None) -> 
     rows = [section_heights[i:i + 2] for i in range(0, len(section_heights), 2)]
     height = 360 + 240 + sum(max(row) for row in rows) + max(0, len(rows) - 1) * gap + 70
 
-    image = Image.new("RGB", (width, height), "#eef2f8")
+    image = Image.new("RGB", (width, height), palette["background"])
     draw = ImageDraw.Draw(image)
 
     # Header.
     header = (margin, 44, width - margin, 296)
-    _draw_shadow_card(draw, header, radius=34, fill="#101828")
+    _draw_shadow_card(draw, header, palette=palette, radius=34, fill=palette["header"])
     draw.rounded_rectangle((margin + 28, 72, margin + 42, 268), radius=7, fill="#0a84ff")
     draw.text((margin + 70, 76), "NFT Firewall", font=subtitle_font, fill="#a7c7ff")
     draw.text((margin + 70, 112), "Daily Security Brief", font=title_font, fill="#ffffff")
     draw.text((margin + 74, 184), parsed.timestamp or "Current status report", font=subtitle_font, fill="#d0d5dd")
 
     status_ok = parsed.status == "HEALTHY"
-    pill_fill = "#163f2a" if status_ok else "#4a141b"
-    pill_text = "#7ee2a8" if status_ok else "#ff8a98"
+    pill_fill = palette["status_ok_fill"] if status_ok else palette["status_bad_fill"]
+    pill_text = palette["status_ok_text"] if status_ok else palette["status_bad_text"]
     pill = (width - margin - 285, 86, width - margin - 44, 146)
     draw.rounded_rectangle(pill, radius=24, fill=pill_fill)
     draw.text((pill[0] + 34, pill[1] + 13), parsed.status, font=status_font, fill=pill_text)
@@ -309,6 +364,7 @@ def render_report_png(report: str, *, output_path: str | Path | None = None) -> 
             accent=accent,
             label_font=metric_label_font,
             value_font=metric_value_font,
+            palette=palette,
         )
 
     # Detail sections.
@@ -327,6 +383,7 @@ def render_report_png(report: str, *, output_path: str | Path | None = None) -> 
                 heading_font=section_font,
                 body_font=body_font,
                 small_font=small_font,
+                palette=palette,
             )
         y += row_h + gap
 
@@ -334,7 +391,7 @@ def render_report_png(report: str, *, output_path: str | Path | None = None) -> 
         (margin, height - 44),
         "Generated by nft-firewall",
         font=subtitle_font,
-        fill="#667085",
+        fill=palette["footer"],
     )
 
     if output_path is None:

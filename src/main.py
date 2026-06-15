@@ -1382,7 +1382,7 @@ def _cmd_firewall_report(args: argparse.Namespace) -> None:
         from utils.report_image import render_report_png
 
         try:
-            image_path = render_report_png(report)
+            image_path = render_report_png(report, theme=getattr(args, "image_theme", "dark"))
         except RuntimeError as exc:
             _die(str(exc))
 
@@ -1949,6 +1949,8 @@ Quick-start workflow:
                      help="Include weekly auto-block summary section")
     frp.add_argument("--image", action="store_true",
                      help="Also render and upload a PNG image report to Keybase")
+    frp.add_argument("--image-theme", choices=("dark", "light"), default="dark",
+                     help="PNG image report theme when --image is used")
     sub.add_parser("profiles",         help="List available firewall profiles")
     rp = sub.add_parser("rules", help="Print the live nftables ruleset")
     rp.add_argument("--no-sets", action="store_true", help="Remove large elements = { ... } blocks from output")
