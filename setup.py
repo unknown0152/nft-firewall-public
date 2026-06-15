@@ -98,6 +98,33 @@ def _run(cmd: List[str], check: bool = True, **kw) -> subprocess.CompletedProces
     return subprocess.run(cmd, capture_output=True, text=True, check=check, **kw)
 
 
+def _same_path(a: Path, b: Path) -> bool:
+    """Return True when two paths refer to the same filesystem location."""
+    try:
+        return a.resolve() == b.resolve()
+    except FileNotFoundError:
+        return a.absolute() == b.absolute()
+
+
+def _copytree_replace(src: Path, dst: Path, label: str) -> None:
+    """Replace *dst* with a copy of *src*, unless source and destination match."""
+    if _same_path(src, dst):
+        _ok(f"{label} already in place at {dst} — skipping self-copy")
+        return
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+
+def _copy_file_replace(src: Path, dst: Path, label: str) -> None:
+    """Copy *src* to *dst*, unless source and destination match."""
+    if _same_path(src, dst):
+        _ok(f"{label} already in place at {dst} — skipping self-copy")
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
 def _debug_log(msg: str) -> None:
     """Write a timestamped message to the debug log."""
     import datetime
@@ -604,18 +631,14 @@ def step2_install_code() -> None:
     # src/ → /opt/nft-firewall/src/
     dst_src = INSTALL_DIR / "src"
     _info(f"Syncing {src_dir} → {dst_src}")
-    if dst_src.exists():
-        shutil.rmtree(dst_src)
-    shutil.copytree(src_dir, dst_src)
+    _copytree_replace(src_dir, dst_src, "src/")
     _ok(f"Installed src/ ({sum(1 for _ in dst_src.rglob('*.py'))} Python files)")
 
     # config/ → /opt/nft-firewall/config/   (main.py resolves config relative to itself)
     cfg_dir = project_root / "config"
     if cfg_dir.is_dir():
         dst_cfg = INSTALL_DIR / "config"
-        if dst_cfg.exists():
-            shutil.rmtree(dst_cfg)
-        shutil.copytree(cfg_dir, dst_cfg)
+        _copytree_replace(cfg_dir, dst_cfg, "config/")
         _ok(f"Installed config/ → {dst_cfg}")
     else:
         _warn("config/ directory not found — skipping (firewall.ini must be added manually)")
@@ -627,12 +650,12 @@ def step2_install_code() -> None:
 
     setup_src = project_root / "setup.py"
     if setup_src.exists():
-        shutil.copy2(setup_src, INSTALL_DIR / "setup.py")
+        _copy_file_replace(setup_src, INSTALL_DIR / "setup.py", "setup.py")
         (INSTALL_DIR / "setup.py").chmod(0o755)
 
     fw_src = project_root / "scripts" / "fw"
     if fw_src.exists():
-        shutil.copy2(fw_src, FW_BIN)
+        _copy_file_replace(fw_src, FW_BIN, "fw wrapper")
         FW_BIN.chmod(0o755)
         _ok(f"Installed fw wrapper -> {FW_BIN}")
 
@@ -640,18 +663,14 @@ def step2_install_code() -> None:
     tests_dir = project_root / "tests"
     if tests_dir.is_dir():
         dst_tests = INSTALL_DIR / "tests"
-        if dst_tests.exists():
-            shutil.rmtree(dst_tests)
-        shutil.copytree(tests_dir, dst_tests)
+        _copytree_replace(tests_dir, dst_tests, "tests/")
         _ok(f"Installed tests/ → {dst_tests}")
 
     # scripts/ → /opt/nft-firewall/scripts/
     scripts_dir = project_root / "scripts"
     if scripts_dir.is_dir():
         dst_scripts = INSTALL_DIR / "scripts"
-        if dst_scripts.exists():
-            shutil.rmtree(dst_scripts)
-        shutil.copytree(scripts_dir, dst_scripts)
+        _copytree_replace(scripts_dir, dst_scripts, "scripts/")
         _ok(f"Installed scripts/ → {dst_scripts}")
 
     # systemd templates and local check metadata are part of the installed
@@ -659,15 +678,13 @@ def step2_install_code() -> None:
     systemd_dir = project_root / "systemd"
     if systemd_dir.is_dir():
         dst_systemd = INSTALL_DIR / "systemd"
-        if dst_systemd.exists():
-            shutil.rmtree(dst_systemd)
-        shutil.copytree(systemd_dir, dst_systemd)
+        _copytree_replace(systemd_dir, dst_systemd, "systemd/")
         _ok(f"Installed systemd/ → {dst_systemd}")
 
     for support_file in ("setup.sh", "pyproject.toml", "Makefile"):
         src = project_root / support_file
         if src.exists():
-            shutil.copy2(src, INSTALL_DIR / support_file)
+            _copy_file_replace(src, INSTALL_DIR / support_file, support_file)
             _ok(f"Installed {support_file} → {INSTALL_DIR / support_file}")
 
 

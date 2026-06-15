@@ -429,3 +429,32 @@ def test_state_dirs_remain_fw_admin_owned(monkeypatch):
         assert any(o.startswith(f"{fw_admin}:") for o in owners), (
             f"{state_dir} must remain fw-admin-owned; got {owners!r}"
         )
+
+
+def test_copytree_replace_skips_self_copy(monkeypatch, tmp_path):
+    import setup
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "main.py").write_text("print('ok')\n")
+
+    calls = []
+    monkeypatch.setattr(setup, "_ok", lambda msg: calls.append(msg))
+
+    setup._copytree_replace(src, src, "src/")
+
+    assert (src / "main.py").exists()
+    assert any("skipping self-copy" in msg for msg in calls)
+
+
+def test_copytree_replace_copies_to_fresh_install_path(tmp_path):
+    import setup
+
+    src = tmp_path / "checkout" / "src"
+    dst = tmp_path / "opt" / "nft-firewall" / "src"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text("print('fresh install')\n")
+
+    setup._copytree_replace(src, dst, "src/")
+
+    assert (dst / "main.py").read_text() == "print('fresh install')\n"
