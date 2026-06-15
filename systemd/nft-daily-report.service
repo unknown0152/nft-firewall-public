@@ -6,7 +6,7 @@ After=network-online.target
 Type=oneshot
 User=fw-admin
 WorkingDirectory=/opt/nft-firewall
-ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py firewall-report --weekly
+ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py firewall-report --weekly --image --image-theme dark
 ExecStartPost=/usr/bin/python3 /opt/nft-firewall/src/main.py maintenance
 Environment=PYTHONPATH=/opt/nft-firewall/src
 StandardOutput=journal
