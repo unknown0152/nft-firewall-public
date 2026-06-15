@@ -82,7 +82,7 @@ class NftWatchdog:
         Path to the INI config file.  Defaults to ``/etc/nft-watchdog.conf``.
     """
 
-    LOG_FILE           = Path("/var/log/nft-watchdog.log")
+    LOG_FILE           = Path("/var/log/nft-firewall/watchdog.log")
     MARKERS_FILE       = Path("/var/lib/nft-firewall/watchdog-markers.json")
     ENDPOINT_CACHE_FILE = Path("/var/lib/nft-firewall/wg-endpoint-cache.json")
     NFT_CONF           = Path("/etc/nftables.conf")

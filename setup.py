@@ -654,6 +654,22 @@ def step2_install_code() -> None:
         shutil.copytree(scripts_dir, dst_scripts)
         _ok(f"Installed scripts/ → {dst_scripts}")
 
+    # systemd templates and local check metadata are part of the installed
+    # support tree because the bundled tests validate them in place.
+    systemd_dir = project_root / "systemd"
+    if systemd_dir.is_dir():
+        dst_systemd = INSTALL_DIR / "systemd"
+        if dst_systemd.exists():
+            shutil.rmtree(dst_systemd)
+        shutil.copytree(systemd_dir, dst_systemd)
+        _ok(f"Installed systemd/ → {dst_systemd}")
+
+    for support_file in ("setup.sh", "pyproject.toml", "Makefile"):
+        src = project_root / support_file
+        if src.exists():
+            shutil.copy2(src, INSTALL_DIR / support_file)
+            _ok(f"Installed {support_file} → {INSTALL_DIR / support_file}")
+
 
 def step2_5_nft_preflight(src_path: Optional[Path] = None) -> None:
     """Validate the generated ruleset with nft --check before touching systemd.

@@ -37,6 +37,10 @@ def _wd() -> NftWatchdog:
     return wd
 
 
+def test_watchdog_log_file_uses_runtime_log_dir():
+    assert NftWatchdog.LOG_FILE == Path("/var/log/nft-firewall/watchdog.log")
+
+
 # ── _vpn_is_healthy ───────────────────────────────────────────────────────────
 
 class TestVpnIsHealthy:

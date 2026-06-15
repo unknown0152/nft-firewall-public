@@ -50,6 +50,18 @@ def test_firewall_threatfeed_service_uses_real_cli_command():
     assert "threatfeed update" not in text
 
 
+def test_watchdog_unit_uses_privileged_systemctl_wrapper():
+    service = (
+        Path(__file__).resolve().parent.parent.parent
+        / "systemd"
+        / "nft-watchdog.service"
+    )
+    text = service.read_text()
+
+    assert "ExecStartPre=-/usr/bin/sudo /usr/local/lib/nft-firewall/fw-systemctl start wg-quick@wg0.service" in text
+    assert "ExecStartPre=-/usr/bin/sudo /usr/bin/systemctl start wg-quick@wg0.service" not in text
+
+
 def test_uninstall_flushes_live_ruleset(monkeypatch):
     import setup
 

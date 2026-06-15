@@ -8,7 +8,7 @@ Type=simple
 User=fw-admin
 WorkingDirectory=/opt/nft-firewall
 # Attempt to start VPN if config exists (requires sudoers grant for fw-admin)
-ExecStartPre=-/usr/bin/sudo /usr/bin/systemctl start wg-quick@wg0.service
+ExecStartPre=-/usr/bin/sudo /usr/local/lib/nft-firewall/fw-systemctl start wg-quick@wg0.service
 ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py watchdog daemon
 Restart=always
 RestartSec=10
