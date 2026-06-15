@@ -39,7 +39,7 @@ _LOCAL_CONF   = _PROJECT_ROOT / "config" / "firewall.ini"
 _SYSTEM_CONF  = Path("/etc/nft-watchdog.conf")
 
 _RETRY_DELAYS: Tuple[int, ...] = (0, 3, 8)
-_ROUTED_TEAM_CHANNELS: Tuple[str, ...] = ("general", "vpn-down", "vpn-up", "ssh")
+_ROUTED_TEAM_CHANNELS: Tuple[str, ...] = ("general", "vpn-down", "vpn-up", "ssh", "ports")
 _CHANNEL_LINE_RE = re.compile(r"^#([A-Za-z0-9][A-Za-z0-9_-]*)\b")
 
 
@@ -118,6 +118,8 @@ def _channel_for_tags(tags: str, title: str, default_channel: str = "general") -
         return "vpn-up"
     if "ssh" in title_l or "login" in title_l:
         return "ssh"
+    if "ports" in tags_l or "firewall access" in title_l:
+        return "ports"
     return default_channel or "general"
 
 

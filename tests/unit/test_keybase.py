@@ -16,6 +16,10 @@ def test_channel_for_tags_routes_ssh_to_ssh_channel():
     assert keybase._channel_for_tags("", "SSH Login", "general") == "ssh"
 
 
+def test_channel_for_tags_routes_port_changes_to_ports_channel():
+    assert keybase._channel_for_tags("ports,shield", "Opened firewall access", "general") == "ports"
+
+
 def test_parse_list_channels_extracts_keybase_channel_names():
     output = """
 Listing channels on nuc_alerts:
@@ -42,7 +46,7 @@ def test_ensure_team_channels_creates_missing_routed_channels(monkeypatch):
     keybase._ensure_team_channels(["sudo", "-u", "bot", "/usr/local/bin/nft-keybase-notify"], "ops", "alerts")
 
     created = [cmd[-1] for cmd in calls if "create-channel" in cmd]
-    assert created == ["vpn-up", "ssh", "alerts"]
+    assert created == ["vpn-up", "ssh", "ports", "alerts"]
 
 
 def test_ensure_team_channels_does_not_raise_when_list_fails(monkeypatch):

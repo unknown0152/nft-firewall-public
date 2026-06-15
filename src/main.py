@@ -531,7 +531,7 @@ def _port_change_notification(
     port_num = validate_port(port, "port")
     action = "Opened" if open_port else "Closed"
     title = f"{action} firewall access"
-    tags = "warning,shield" if open_port else "shield"
+    tags = "ports,warning,shield" if open_port else "ports,shield"
     priority = "high" if open_port else "default"
     service = description or "not labeled"
     body_lines = [

@@ -164,7 +164,7 @@ def test_port_change_notification_for_opened_port(tmp_path):
     assert "Profile: `cosmos-vpn-secure`" in body
     assert "Config: `network.extra_ports`" in body
     assert "Safe apply confirmed" in body
-    assert tags == "warning,shield"
+    assert tags == "ports,warning,shield"
     assert priority == "high"
 
 
@@ -182,5 +182,5 @@ def test_port_change_notification_for_closed_port(tmp_path):
     assert "*Closed* `7359` for *LAN UDP*" in body
     assert "Service: not labeled" in body
     assert "Config: `network.lan_allow_udp_ports`" in body
-    assert tags == "shield"
+    assert tags == "ports,shield"
     assert priority == "default"
