@@ -399,6 +399,28 @@ def test_setup_sh_does_not_clobber_existing_resolv_conf():
             assert "! [ -e /etc/resolv.conf ]" in text
 
 
+def test_setup_sh_fails_hard_on_core_install_failure():
+    """setup.sh must not continue into integrations after setup.py fails."""
+    setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
+    text = setup_sh.read_text()
+
+    assert "python3 setup.py install </dev/tty" in text
+    assert "python3 setup.py install\nfi" in text
+    assert "Core install finished with notice" not in text
+    assert "setup.py install </dev/tty) ||" not in text
+
+
+def test_setup_sh_integrations_are_explicit_opt_in():
+    """Cosmos/Keybase hardening should not run on the default core install path."""
+    setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
+    text = setup_sh.read_text()
+
+    assert "RUN_INTEGRATIONS=0" in text
+    assert "--with-integrations" in text
+    assert "Skipping optional Cosmos/Keybase hardening" in text
+    assert 'if [[ "$RUN_INTEGRATIONS" -eq 1 ]]' in text
+
+
 def test_state_dirs_remain_fw_admin_owned(monkeypatch):
     """Runtime state/log dirs must stay fw-admin-owned so daemons can write."""
     import setup

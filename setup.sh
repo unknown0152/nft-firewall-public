@@ -7,6 +7,28 @@
 # =============================================================================
 set -euo pipefail
 
+RUN_INTEGRATIONS=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-integrations|--with-cosmos-keybase)
+            RUN_INTEGRATIONS=1
+            ;;
+        -h|--help)
+            cat <<'USAGE'
+Usage: sudo bash setup.sh [--with-integrations]
+
+Installs the core nft-firewall project. Optional Cosmos/Keybase hardening is
+skipped by default and only runs when --with-integrations is supplied.
+USAGE
+            exit 0
+            ;;
+        *)
+            echo "[FATAL] Unknown option: $arg" >&2
+            exit 2
+            ;;
+    esac
+done
+
 echo "[+] NFT Firewall Bootstrapper"
 
 # 1. Install mandatory system packages if missing
@@ -41,8 +63,13 @@ chmod +x scripts/safe-nft-apply.sh # Ensure internal scripts are ready
 
 # We run setup.py directly for the core firewall install
 echo "[+] Running core installation..."
-# Handle interactive TTY for the wizard; wrap in subshell for clean return
-(python3 setup.py install </dev/tty) || echo "[!] Core install finished with notice."
+# Handle interactive TTY for the wizard. A core installer failure must stop the
+# bootstrapper before any optional integrations are attempted.
+if [[ -r /dev/tty ]]; then
+    python3 setup.py install </dev/tty
+else
+    python3 setup.py install
+fi
 
 # 5. Run the Cosmos & Keybase hardening logic (modular script)
 # We feed the current config to the hardening script
@@ -50,9 +77,13 @@ if [[ -f "/opt/nft-firewall/config/firewall.ini" ]]; then
     export FIREWALL_CONFIG="/opt/nft-firewall/config/firewall.ini"
 fi
 
-echo "[+] Applying system-wide hardening and integrations..."
-# We will create this core-hardening.sh script in the next step
-bash scripts/core-hardening.sh
+if [[ "$RUN_INTEGRATIONS" -eq 1 ]]; then
+    echo "[+] Applying optional Cosmos/Keybase hardening and integrations..."
+    bash scripts/core-hardening.sh
+else
+    echo "[+] Skipping optional Cosmos/Keybase hardening."
+    echo "    Re-run with --with-integrations when Docker/Cosmos/Keybase setup is intended."
+fi
 
 echo ""
 echo "[OK] All-in-one installation complete."
