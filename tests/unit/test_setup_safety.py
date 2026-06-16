@@ -427,6 +427,14 @@ def test_setup_sh_does_not_replace_systemd_resolved_with_openresolv():
     assert "openresolv" not in text
 
 
+def test_setup_sh_uses_debian_13_wireguard_packages_without_dkms():
+    setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
+    text = setup_sh.read_text()
+
+    assert "wireguard-tools" in text
+    assert "wireguard-dkms" not in text
+
+
 def test_setup_sh_fails_hard_on_core_install_failure():
     """setup.sh must not continue into integrations after setup.py fails."""
     setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
