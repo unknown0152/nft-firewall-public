@@ -884,8 +884,9 @@ def _install_keybase_wrapper(kb_user: str) -> None:
     """Write /usr/local/bin/nft-keybase-notify — the sudoers-safe Keybase wrapper.
 
     The wrapper sets HOME and XDG_RUNTIME_DIR for the Keybase user and exec's
-    keybase, so the sudoers NOPASSWD rule can match an exact, fixed path instead
-    of /usr/bin/env.
+    keybase through that user's login shell, so the sudoers NOPASSWD rule can
+    match an exact, fixed path while still seeing the Keybase session state that
+    works under `sudo -iu <user> keybase ...`.
     """
     wrapper = Path("/usr/local/bin/nft-keybase-notify")
 
@@ -916,7 +917,7 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         f"export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{kb_uid}/bus\n"
         'export PATH="/usr/local/bin:/usr/bin:/bin"\n'
         "cd \"$HOME\" 2>/dev/null || true\n"
-        'exec /usr/bin/keybase "$@"\n'
+        'exec "$SHELL" -lc \'exec /usr/bin/keybase "$@"\' keybase "$@"\n'
     )
 
     wrapper.write_text(script)
