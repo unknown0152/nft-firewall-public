@@ -1,5 +1,6 @@
 """Unit tests for control-panel port manager helpers."""
 import configparser
+import argparse
 import sys
 from pathlib import Path
 
@@ -184,3 +185,80 @@ def test_port_change_notification_for_closed_port(tmp_path):
     assert "Config: `network.lan_allow_udp_ports`" in body
     assert tags == "ports,shield"
     assert priority == "default"
+
+
+def test_cmd_open_port_updates_config_applies_and_notifies(monkeypatch, tmp_path):
+    config = tmp_path / "firewall.ini"
+    _write_config(
+        config,
+        """
+[install]
+profile = cosmos-vpn-secure
+
+[network]
+extra_ports =
+""",
+    )
+
+    calls = []
+    monkeypatch.setattr(main, "_active_config_path", lambda: config)
+    monkeypatch.setattr(main, "_cmd_safe_apply", lambda args: calls.append(("apply", args.profile)) or True)
+    monkeypatch.setattr(
+        main,
+        "_notify_port_change",
+        lambda **kwargs: calls.append(("notify", kwargs)) or True,
+    )
+
+    main._cmd_open_port(argparse.Namespace(
+        port=12345,
+        description=["test-keybase-alert"],
+        scope="vpn-tcp",
+        profile="",
+    ))
+
+    cfg = _read_config(config)
+    assert cfg.get("network", "extra_ports") == "12345"
+    assert cfg.get("port_labels", "vpn_tcp_12345") == "test-keybase-alert"
+    assert calls[0] == ("apply", "cosmos-vpn-secure")
+    assert calls[1][0] == "notify"
+    assert calls[1][1]["port"] == 12345
+    assert calls[1][1]["description"] == "test-keybase-alert"
+
+
+def test_cmd_close_port_updates_config_applies_and_notifies(monkeypatch, tmp_path):
+    config = tmp_path / "firewall.ini"
+    _write_config(
+        config,
+        """
+[install]
+profile = cosmos-vpn-secure
+
+[network]
+lan_allow_udp_ports = 7359
+
+[port_labels]
+lan_udp_7359 = Discovery
+""",
+    )
+
+    calls = []
+    monkeypatch.setattr(main, "_active_config_path", lambda: config)
+    monkeypatch.setattr(main, "_cmd_safe_apply", lambda args: calls.append(("apply", args.profile)) or True)
+    monkeypatch.setattr(
+        main,
+        "_notify_port_change",
+        lambda **kwargs: calls.append(("notify", kwargs)) or True,
+    )
+
+    main._cmd_close_port(argparse.Namespace(
+        port=7359,
+        scope="lan-udp",
+        profile="",
+    ))
+
+    cfg = _read_config(config)
+    assert cfg.get("network", "lan_allow_udp_ports") == ""
+    assert not cfg.has_section("port_labels")
+    assert calls[0] == ("apply", "cosmos-vpn-secure")
+    assert calls[1][0] == "notify"
+    assert calls[1][1]["open_port"] is False

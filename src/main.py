@@ -574,6 +574,85 @@ def _notify_port_change(
     return notify(title=title, body=body, tags=tags, priority=priority)
 
 
+def _port_scope(scope: str) -> tuple[str, str]:
+    """Return ``(config_key, display_label)`` for a CLI port scope."""
+    scopes = {
+        "vpn-tcp": ("extra_ports", "VPN TCP"),
+        "lan-tcp": ("lan_allow_ports", "LAN TCP"),
+        "lan-udp": ("lan_allow_udp_ports", "LAN UDP"),
+    }
+    try:
+        return scopes[scope]
+    except KeyError:
+        raise ValueError(f"unsupported port scope: {scope}") from None
+
+
+def _cmd_port_change(args: argparse.Namespace, *, open_port: bool) -> None:
+    """Open or close a config-backed port, then run mandatory safe-apply."""
+    cfg_path = _active_config_path()
+    if cfg_path is None:
+        _die("No firewall config found.")
+
+    try:
+        key, label = _port_scope(args.scope)
+        description = " ".join(getattr(args, "description", []) or [])
+        changed, ports = _change_config_port(
+            cfg_path,
+            key,
+            args.port,
+            open_port=open_port,
+            description=description,
+        )
+    except ValueError as exc:
+        _die(str(exc))
+
+    action = "Opened" if open_port else "Closed"
+    if changed:
+        print(f"[ok] {action} config for {label} port {args.port}; {key}: {_format_port_list(ports)}")
+    else:
+        state = "already open" if open_port else "already closed"
+        print(f"[ok] No config change; {label} port {args.port} is {state}.")
+        return
+
+    cfg = _load_config()
+    profile = (
+        getattr(args, "profile", "")
+        or cfg.get("install", "profile", fallback="cosmos-vpn-secure").strip()
+        or "cosmos-vpn-secure"
+    )
+
+    print(f"[info] Running safe-apply for profile '{profile}'. Type CONFIRM to keep the live rules.")
+    applied = _cmd_safe_apply(argparse.Namespace(profile=profile))
+    if not applied:
+        print("[warn] Live rules were rolled back. Config remains changed; rerun safe-apply when ready.")
+        return
+
+    cfg_after = _load_config()
+    saved_description = _get_port_label(cfg_after, key, args.port)
+    if _notify_port_change(
+        port=args.port,
+        label=label,
+        open_port=open_port,
+        profile=profile,
+        cfg_path=cfg_path,
+        key=key,
+        description=saved_description,
+    ):
+        print("[ok] Keybase notification sent.")
+    else:
+        print("[warn] Keybase notification failed; port change is still applied.")
+
+
+def _cmd_open_port(args: argparse.Namespace) -> None:
+    """open-port <port> [description] — config-backed port open with safe-apply."""
+    _cmd_port_change(args, open_port=True)
+
+
+def _cmd_close_port(args: argparse.Namespace) -> None:
+    """close-port <port> — config-backed port close with safe-apply."""
+    _cmd_port_change(args, open_port=False)
+
+
 def _nftables_service_status() -> tuple[str, str]:
     """Return doctor status for nftables.service boot persistence."""
     import shutil
@@ -1899,6 +1978,19 @@ Quick-start workflow:
 
     sub.add_parser("ip-list",        help="List current blocked and trusted IPs")
 
+    op = sub.add_parser("open-port", help="Open a config-backed port with safe-apply")
+    op.add_argument("port", type=int)
+    op.add_argument("description", nargs="*", help="Optional service label, e.g. Jellyfin")
+    op.add_argument("--scope", choices=("vpn-tcp", "lan-tcp", "lan-udp"), default="vpn-tcp",
+                    help="Port scope to change (default: vpn-tcp)")
+    op.add_argument("--profile", default="", help="Profile to safe-apply (default: [install] profile)")
+
+    cp = sub.add_parser("close-port", help="Close a config-backed port with safe-apply")
+    cp.add_argument("port", type=int)
+    cp.add_argument("--scope", choices=("vpn-tcp", "lan-tcp", "lan-udp"), default="vpn-tcp",
+                    help="Port scope to change (default: vpn-tcp)")
+    cp.add_argument("--profile", default="", help="Profile to safe-apply (default: [install] profile)")
+
     # ── Docker ────────────────────────────────────────────────────────────────
     ep = sub.add_parser("docker-expose",
                         help="Add a container port to the expose registry")
@@ -1993,6 +2085,8 @@ _HANDLERS = {
     "allow"           : _cmd_allow,
     "disallow"        : _cmd_disallow,
     "ip-list"         : _cmd_ip_list,
+    "open-port"       : _cmd_open_port,
+    "close-port"      : _cmd_close_port,
     "docker-expose"   : _cmd_docker_expose,
     "docker-unexpose" : _cmd_docker_unexpose,
     "list-exposed"    : _cmd_list_exposed,
