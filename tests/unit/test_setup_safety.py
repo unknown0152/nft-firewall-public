@@ -475,12 +475,15 @@ def test_core_hardening_uses_documented_cosmos_standalone_flags():
     script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
     text = script.read_text()
 
-    assert 'COSMOS_INSTALLER_FLAGS="${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}"' in text
+    assert 'NFT_COSMOS_INSTALLER_FLAGS="${NFT_COSMOS_INSTALLER_FLAGS:-${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}}"' in text
+    assert "unset COSMOS_INSTALLER_FLAGS" in text
     assert "ensure_package_command unzip unzip" in text
     assert 'export COSMOS_CONFIG_FOLDER="$COSMOS_CONFIG_DIR/"' in text
-    assert 'bash "$COSMOS_INSTALLER" $COSMOS_INSTALLER_FLAGS' in text
+    assert 'bash "$COSMOS_INSTALLER" $NFT_COSMOS_INSTALLER_FLAGS' in text
     assert 'bash "$COSMOS_INSTALLER"' in text
     assert 'bash "$COSMOS_INSTALLER"\n' not in text
+    assert "nft-firewall controls firewall policy" in text
+    assert 'COSMOS_SUPPLEMENTARY_GROUPS="SupplementaryGroups=docker"' in text
 
 
 def test_setup_sh_uses_public_repo_url_by_default():

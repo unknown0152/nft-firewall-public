@@ -15,7 +15,8 @@ APP_CONFIG_DIR="/srv/config"
 MEDIA_LIBRARY_DIR="/srv/media"
 BACKUP_DIR="/srv/backups"
 DOCKER_DATA_DIR="/srv/docker"
-COSMOS_INSTALLER_FLAGS="${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}"
+NFT_COSMOS_INSTALLER_FLAGS="${NFT_COSMOS_INSTALLER_FLAGS:-${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}}"
+unset COSMOS_INSTALLER_FLAGS
 
 ensure_package_command() {
   local command_name="$1" package_name="$2"
@@ -45,14 +46,13 @@ else
   chmod +x "$COSMOS_INSTALLER"
 
   echo "[+] Patching Cosmos installer to skip iptables..."
-  # We prepend the override to the script so it is defined before any calls
-  sed -i '1a check_ports() { echo "[+] Skipping Cosmos iptables; nft-firewall active."; }' "$COSMOS_INSTALLER"
+  sed -i 's/^check_ports$/print_status "Skipping Cosmos iptables; nft-firewall controls firewall policy."/g' "$COSMOS_INSTALLER"
   
-  echo "[+] Running Cosmos standalone installer ($COSMOS_INSTALLER_FLAGS)..."
+  echo "[+] Running Cosmos standalone installer ($NFT_COSMOS_INSTALLER_FLAGS)..."
   export COSMOS_CONFIG_FOLDER="$COSMOS_CONFIG_DIR/"
   export NO_DOCKER=1
   # shellcheck disable=SC2086
-  bash "$COSMOS_INSTALLER" $COSMOS_INSTALLER_FLAGS
+  bash "$COSMOS_INSTALLER" $NFT_COSMOS_INSTALLER_FLAGS
   echo "[ok] Cosmos installer finished"
 fi
 
@@ -77,8 +77,10 @@ else
 fi
 if getent group docker >/dev/null 2>&1; then
   usermod -aG docker "$MEDIA_USER" || true
+  COSMOS_SUPPLEMENTARY_GROUPS="SupplementaryGroups=docker"
 else
   echo "[!] Docker group missing. Install/start Docker before using Cosmos to manage containers."
+  COSMOS_SUPPLEMENTARY_GROUPS=""
 fi
 
 ensure_dir() {
@@ -139,11 +141,11 @@ chmod +x /usr/local/bin/fix-cosmos-perms
 # required because chown/mkdir under /var/lib are root-only operations. The
 # main ExecStart still drops to media:media via User=/Group=.
 mkdir -p /etc/systemd/system/CosmosCloud.service.d
-cat > /etc/systemd/system/CosmosCloud.service.d/override.conf <<'EOF'
+cat > /etc/systemd/system/CosmosCloud.service.d/override.conf <<EOF
 [Service]
 User=media
 Group=media
-SupplementaryGroups=docker
+$COSMOS_SUPPLEMENTARY_GROUPS
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
