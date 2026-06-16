@@ -1,6 +1,6 @@
 # NFT Firewall AI Context
 
-Last updated: 2026-06-14
+Last updated: 2026-06-16
 
 This repository contains the nft-firewall source tree. On a deployed host,
 operator-specific topology, runtime state, and local history should be kept in
@@ -71,7 +71,15 @@ Included in this public export:
 - Ruff is available as optional local developer tooling. The current lint scope
   is intentionally narrow (`F821`, `F822`, `F823`) to catch undefined-name
   defects without broad style churn.
-- Current unit status: `198 passed`; current `src/core` coverage: `90.93%`.
+- Added public curl bootstrap entrypoint `install.sh`, which delegates to the
+  tested `setup.sh` installer path and preserves arguments such as
+  `--with-integrations`.
+- Clean Debian 13 VM validation covered the public bootstrap path, core install,
+  optional Cosmos standalone integration, DNS preservation, and ruleset
+  generation/apply using a dummy `wg0` interface. A real WireGuard tunnel and
+  Docker-backed Cosmos container management remain separate environment tests.
+- Current unit collection: `251` tests; current local `make check` status:
+  passing.
 
 Pending larger refactor work:
 

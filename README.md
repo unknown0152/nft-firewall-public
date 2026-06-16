@@ -16,10 +16,11 @@ deployment. The code, tests, systemd templates, and operator docs are included,
 but live host configuration, runtime state, logs, backup artifacts, and private
 history are intentionally excluded.
 
-The curl bootstrap path has been tested on a clean Debian 13 systemd VM. It is
-still conservative: the core install writes the local config and services, but
-operators should review and validate generated firewall rules before applying
-them on a real host.
+The curl bootstrap path has been tested on a clean Debian 13 systemd VM. The
+tested path installs the core firewall tooling, deploys systemd units, installs
+Cosmos as an optional standalone service, and validates ruleset generation. A
+real WireGuard interface is still required before applying the production
+killswitch policy on a real host.
 
 ## Features
 
@@ -51,6 +52,8 @@ private deployment config.
 ## Quick Install
 
 Target: Debian 13 with systemd and console or out-of-band recovery access.
+Run this only after reviewing whether the default package and service changes
+fit the target host.
 
 Core firewall install:
 
@@ -75,6 +78,10 @@ sudo fw safe-apply cosmos-vpn-secure
 The optional integration path installs Cosmos as a standalone service and keeps
 Cosmos config/storage under `/srv`. It skips Cosmos iptables changes so
 nft-firewall remains the firewall authority.
+
+Clean-VM validation covered the installer path without Docker, Keybase, or a
+real WireGuard provider. Cosmos starts without Docker, but container management
+requires Docker to be installed and reachable by Cosmos.
 
 ## Repository Structure
 

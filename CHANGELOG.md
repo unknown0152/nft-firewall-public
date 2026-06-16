@@ -23,6 +23,13 @@
 - Made Keybase listener polling configurable with bounded parsing to reduce
   journal/sudo noise without changing command authorization or firewall
   behavior.
+- Removed Debian 13 bootstrap package assumptions that caused noisy or unsafe
+  clean-host behavior: `wireguard-dkms` is no longer requested, and
+  `openresolv` is no longer installed by default so `systemd-resolved` is not
+  replaced.
+- Optional Cosmos integration now simulates the generated nftables ruleset
+  before any automatic apply. If required runtime interfaces such as `wg0` are
+  missing, it reports the validation failure and skips automatic apply.
 
 ### Added
 
@@ -37,6 +44,13 @@
   the existing ConfigParser-based configuration flow.
 - Added a narrow Ruff developer check for undefined-name diagnostics only, so
   maintenance can catch high-signal Python mistakes without broad style churn.
+- Added public `install.sh` curl entrypoint:
+  `curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash`
+- Added optional curl install flow for Cosmos/Keybase integration via
+  `--with-integrations`.
+- Added clean-host safety tests for the public bootstrap URL, local install
+  entrypoint preservation, Debian 13 package list, and simulate-before-apply
+  behavior.
 
 ### Tests
 
@@ -55,10 +69,16 @@
 - Restored missing source `systemd/` templates and `setup.sh` so the full unit
   suite runs cleanly from `/opt/nft-firewall`.
 - Added `pyproject.toml` with pytest and coverage configuration.
+- Clean Debian 13 VM validation covered core bootstrap, interactive config
+  wizard, systemd unit deployment, sudoers validation, optional Cosmos
+  standalone service install, DNS preservation, no Cosmos iptables mutation,
+  safe skip when `wg0` is missing, and successful ruleset apply with a dummy
+  `wg0` interface.
 
 ### Operational Notes
 
 - Public export excludes live config, runtime state, generated rulesets,
   backup artifacts, logs, and host-local history.
-- Full unit suite at export time: `198 passed`.
-- Core coverage at export time: `90.93%`, above the 80% target.
+- Current local `make check`: passing.
+- Current unit collection: `251` tests.
+- Core coverage target remains 80% for `src/core`.
