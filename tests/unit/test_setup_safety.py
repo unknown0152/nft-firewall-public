@@ -42,15 +42,9 @@ def test_keybase_wrapper_sets_login_like_environment():
     setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
     text = setup_py.read_text()
 
-    assert "export USER=" in text
-    assert "export LOGNAME=" in text
-    assert "export SHELL=" in text
-    assert "export XDG_RUNTIME_DIR=/run/user/{kb_uid}" in text
-    assert "export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{kb_uid}/bus" in text
-    assert 'export PATH="/usr/local/bin:/usr/bin:/bin"' in text
-    assert 'cd \\"$HOME\\" 2>/dev/null || true' in text
-    assert 'source "$HOME/.config/keybase/keybase.autogen.env"' in text
-    assert "exec \"$SHELL\" -lc \\'exec /usr/bin/keybase \"$@\"\\' keybase \"$@\"" in text
+    assert 'kb_user="{kb_user or ""}"' in text
+    assert 'exec /usr/sbin/runuser -l "$kb_user"' in text
+    assert 'exec /usr/bin/keybase "$@"' in text
 
 
 def test_firewall_threatfeed_service_uses_real_cli_command():

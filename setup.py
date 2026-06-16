@@ -824,14 +824,14 @@ def step4_install_sudoers() -> None:
 
     if keybase_user:
         fragment_lines += [
-            "# Keybase notifications — fw-admin uses the wrapper script as the Keybase account",
-            f"{SYSTEM_USER} ALL=({keybase_user}) NOPASSWD: /usr/local/bin/nft-keybase-notify",
+            "# Keybase notifications — wrapper opens a login session for the Keybase account",
+            f"{SYSTEM_USER} ALL=(root) NOPASSWD: /usr/local/bin/nft-keybase-notify",
             "",
         ]
     else:
         fragment_lines += [
             "# Keybase linux_user not detected in firewall.ini — add manually if needed:",
-            f"# {SYSTEM_USER} ALL=(<your-linux-user>) NOPASSWD: /usr/local/bin/nft-keybase-notify",
+            f"# {SYSTEM_USER} ALL=(root) NOPASSWD: /usr/local/bin/nft-keybase-notify",
             "",
         ]
 
@@ -852,14 +852,13 @@ def step4_install_sudoers() -> None:
     SUDOERS_FILE.chmod(0o440)   # sudo requires 440 or 640
     _ok(f"Installed {SUDOERS_FILE}")
     if keybase_user:
-        _ok(f"Keybase grant: {SYSTEM_USER} may run keybase as '{keybase_user}'")
+        _ok(f"Keybase grant: {SYSTEM_USER} may run Keybase wrapper for '{keybase_user}'")
     else:
         _warn("Keybase user not configured — add to firewall.ini [keybase] linux_user")
 
     # Install the Keybase wrapper script used by the sudoers rule above.
-    # Running `sudo -u nuc env HOME=... keybase` would make sudo execute /usr/bin/env
-    # which doesn't match a clean NOPASSWD rule.  The wrapper sets the environment
-    # variables and exec's keybase so the sudoers command is an exact, fixed path.
+    # The wrapper opens a login session for the configured Keybase account while
+    # keeping sudoers pinned to an exact, fixed command path.
     _install_keybase_wrapper(keybase_user)
 
 
@@ -883,11 +882,10 @@ def _read_keybase_user() -> str:
 def _install_keybase_wrapper(kb_user: str) -> None:
     """Write /usr/local/bin/nft-keybase-notify — the sudoers-safe Keybase wrapper.
 
-    The wrapper sets HOME and XDG_RUNTIME_DIR for the Keybase user, loads
-    Keybase's generated environment when present, and exec's keybase through
-    that user's login shell. This keeps the sudoers NOPASSWD rule pinned to an
-    exact path while still seeing the session state that works under
-    `sudo -iu <user> keybase ...`.
+    The wrapper is executed as root via a pinned sudoers rule, then uses runuser
+    to execute keybase through the configured user's login session. This matches
+    the session state that works under `sudo -iu <user> keybase ...` while
+    keeping the daemon-facing sudo command constrained to one exact path.
     """
     wrapper = Path("/usr/local/bin/nft-keybase-notify")
 
@@ -896,7 +894,6 @@ def _install_keybase_wrapper(kb_user: str) -> None:
             pw      = pwd.getpwnam(kb_user)
             kb_home = pw.pw_dir
             kb_uid  = pw.pw_uid
-            kb_shell = pw.pw_shell or "/bin/sh"
         except KeyError:
             _warn(f"Cannot look up user '{kb_user}' — Keybase wrapper not installed")
             return
@@ -904,30 +901,23 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         # No Keybase user configured; install a stub that exits clearly
         kb_home = "/home/UNCONFIGURED"
         kb_uid  = 1000
-        kb_shell = "/bin/sh"
 
     script = (
         "#!/bin/bash\n"
+        "set -euo pipefail\n"
         "# Wrapper installed by nft-firewall setup.py\n"
-        "# Allows fw-admin to run keybase as the Keybase account via a clean sudo rule.\n"
-        f"export HOME={kb_home}\n"
-        f"export USER={kb_user or 'UNCONFIGURED'}\n"
-        f"export LOGNAME={kb_user or 'UNCONFIGURED'}\n"
-        f"export SHELL={kb_shell}\n"
-        f"export XDG_RUNTIME_DIR=/run/user/{kb_uid}\n"
-        f"export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{kb_uid}/bus\n"
-        'export PATH="/usr/local/bin:/usr/bin:/bin"\n'
-        "cd \"$HOME\" 2>/dev/null || true\n"
-        'if [[ -r "$HOME/.config/keybase/keybase.autogen.env" ]]; then\n'
-        '  # shellcheck source=/dev/null\n'
-        '  source "$HOME/.config/keybase/keybase.autogen.env"\n'
+        "# Allows fw-admin to invoke keybase through a root-owned, exact sudo rule.\n"
+        f'kb_user="{kb_user or ""}"\n'
+        'if [[ -z "$kb_user" ]]; then\n'
+        '  echo "Keybase linux_user is not configured" >&2\n'
+        "  exit 1\n"
         "fi\n"
-        'exec "$SHELL" -lc \'exec /usr/bin/keybase "$@"\' keybase "$@"\n'
+        'exec /usr/sbin/runuser -l "$kb_user" -c \'exec /usr/bin/keybase "$@"\' keybase "$@"\n'
     )
 
     wrapper.write_text(script)
     wrapper.chmod(0o755)
-    _ok(f"Installed {wrapper}  (HOME={kb_home}, XDG_RUNTIME_DIR=/run/user/{kb_uid})")
+    _ok(f"Installed {wrapper}  (login user={kb_user or 'UNCONFIGURED'}, home={kb_home}, uid={kb_uid})")
 
 
 def _read_install_config() -> configparser.ConfigParser:

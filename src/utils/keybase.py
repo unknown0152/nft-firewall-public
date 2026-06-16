@@ -249,11 +249,9 @@ def notify(title: str, body: str, tags: str = "", priority: str = "default") -> 
         print(f"[keybase] WARNING: cannot look up Linux user '{kb_user}'")
         return False
 
-    # Use a wrapper script so sudo can match an exact command path.
-    # Calling `sudo -u nuc env HOME=... keybase ...` makes sudo run /usr/bin/env,
-    # which doesn't match a simple `NOPASSWD: /usr/bin/keybase` sudoers rule.
-    # The wrapper sets HOME and XDG_RUNTIME_DIR then exec's keybase.
-    sudo_prefix = ["sudo", "-u", kb_user, "/usr/local/bin/nft-keybase-notify"]
+    # Use a root-owned wrapper script so sudo can match one exact command path.
+    # The wrapper opens a login session for the configured Keybase Linux user.
+    sudo_prefix = ["sudo", "/usr/local/bin/nft-keybase-notify"]
 
     if team:
         _ensure_team_channels(sudo_prefix, team, default_channel)
@@ -309,7 +307,7 @@ def upload_file(
         print(f"[keybase] WARNING: cannot look up Linux user '{kb_user}'")
         return False
 
-    sudo_prefix = ["sudo", "-u", kb_user, "/usr/local/bin/nft-keybase-notify"]
+    sudo_prefix = ["sudo", "/usr/local/bin/nft-keybase-notify"]
 
     if team:
         _ensure_team_channels(sudo_prefix, team, default_channel)

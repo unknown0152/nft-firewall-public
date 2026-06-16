@@ -246,13 +246,14 @@ class KeybaseListener:
             sys.exit(1)
 
     def _kb_prefix(self, cfg: Dict) -> List[str]:
-        """Build the ``sudo -u <user> /usr/local/bin/nft-keybase-notify`` prefix.
+        """Build the ``sudo /usr/local/bin/nft-keybase-notify`` prefix.
 
-        Uses a wrapper script instead of ``env HOME=…`` so that the sudoers rule
-        can match an exact command path rather than ``/usr/bin/env``.
+        Uses a root-owned wrapper script so that the sudoers rule can match an
+        exact command path while the wrapper opens the Keybase user's login
+        session.
         """
-        name, _uid, _home = self._get_kb_user(cfg)
-        return ["sudo", "-u", name, "/usr/local/bin/nft-keybase-notify"]
+        self._get_kb_user(cfg)
+        return ["sudo", "/usr/local/bin/nft-keybase-notify"]
 
     def _send_reply(self, cfg: Dict, channel: Dict, body: str) -> None:
         """Send *body* to *channel* via ``keybase chat api``."""

@@ -43,7 +43,7 @@ def test_ensure_team_channels_creates_missing_routed_channels(monkeypatch):
 
     monkeypatch.setattr(keybase.subprocess, "run", fake_run)
 
-    keybase._ensure_team_channels(["sudo", "-u", "bot", "/usr/local/bin/nft-keybase-notify"], "ops", "alerts")
+    keybase._ensure_team_channels(["sudo", "/usr/local/bin/nft-keybase-notify"], "ops", "alerts")
 
     created = [cmd[-1] for cmd in calls if "create-channel" in cmd]
     assert created == ["vpn-up", "ssh", "ports", "alerts"]
@@ -100,8 +100,6 @@ def test_upload_file_uses_team_channel_upload(monkeypatch, tmp_path):
 
     assert calls == [[
         "sudo",
-        "-u",
-        "botuser",
         "/usr/local/bin/nft-keybase-notify",
         "chat",
         "upload",
