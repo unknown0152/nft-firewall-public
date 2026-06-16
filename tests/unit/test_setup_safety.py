@@ -541,6 +541,18 @@ def test_install_sh_fetches_public_setup_and_preserves_args():
     assert 'bash "$tmp" "$@"' in text
 
 
+def test_install_sh_writes_timestamped_install_log():
+    install_sh = Path(__file__).resolve().parent.parent.parent / "install.sh"
+    text = install_sh.read_text()
+
+    assert 'LOG_DIR="${NFT_FIREWALL_INSTALL_LOG_DIR:-/var/log/nft-firewall}"' in text
+    assert 'LOG_FILE="${NFT_FIREWALL_INSTALL_LOG:-}"' in text
+    assert 'LOG_FILE="$LOG_DIR/install-$ts.log"' in text
+    assert 'chmod 0600 "$LOG_FILE"' in text
+    assert 'exec > >(tee -a "$LOG_FILE") 2>&1' in text
+    assert 'echo "[+] Install log: $LOG_FILE"' in text
+
+
 def test_setup_installs_curl_entrypoint_locally():
     setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
     text = setup_py.read_text()
