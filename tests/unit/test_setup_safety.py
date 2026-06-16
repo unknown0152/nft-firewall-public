@@ -522,6 +522,23 @@ def test_setup_sh_uses_public_repo_url_by_default():
     assert "git clone -q https://github.com/unknown0152/nft-firewall.git" not in text
 
 
+def test_install_sh_fetches_public_setup_and_preserves_args():
+    install_sh = Path(__file__).resolve().parent.parent.parent / "install.sh"
+    text = install_sh.read_text()
+
+    assert "https://raw.githubusercontent.com/unknown0152/nft-firewall-public/${BRANCH}/setup.sh" in text
+    assert "NFT_FIREWALL_SETUP_URL" in text
+    assert 'bash "$tmp" "$@"' in text
+
+
+def test_setup_installs_curl_entrypoint_locally():
+    setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
+    text = setup_py.read_text()
+
+    assert '"install.sh", "setup.sh"' in text
+    assert "support_file.endswith(\".sh\")" in text
+
+
 def test_step7_resolves_endpoint_without_rewriting_wireguard_config(monkeypatch, tmp_path):
     import socket
     import setup

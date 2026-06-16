@@ -16,10 +16,10 @@ deployment. The code, tests, systemd templates, and operator docs are included,
 but live host configuration, runtime state, logs, backup artifacts, and private
 history are intentionally excluded.
 
-The deployment documentation is conservative on purpose. It focuses on review,
-validation, and recovery workflows instead of offering a one-command public
-installer. Public installation steps should be written only after they have
-been tested on a clean target host.
+The curl bootstrap path has been tested on a clean Debian 13 systemd VM. It is
+still conservative: the core install writes the local config and services, but
+operators should review and validate generated firewall rules before applying
+them on a real host.
 
 ## Features
 
@@ -47,6 +47,34 @@ Use [config/firewall.ini.example](config/firewall.ini.example) as the starting
 point for local configuration. Real interface names, LAN ranges, VPN endpoints,
 SSH ports, Keybase identifiers, and service-specific values belong only in a
 private deployment config.
+
+## Quick Install
+
+Target: Debian 13 with systemd and console or out-of-band recovery access.
+
+Core firewall install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
+```
+
+Core install plus optional Cosmos/Keybase integration:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations
+```
+
+After the core install, validate before applying firewall rules:
+
+```bash
+sudo fw doctor cosmos-vpn-secure
+sudo fw simulate cosmos-vpn-secure
+sudo fw safe-apply cosmos-vpn-secure
+```
+
+The optional integration path installs Cosmos as a standalone service and keeps
+Cosmos config/storage under `/srv`. It skips Cosmos iptables changes so
+nft-firewall remains the firewall authority.
 
 ## Repository Structure
 

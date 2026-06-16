@@ -692,10 +692,12 @@ def step2_install_code() -> None:
         _copytree_replace(systemd_dir, dst_systemd, "systemd/")
         _ok(f"Installed systemd/ → {dst_systemd}")
 
-    for support_file in ("setup.sh", "pyproject.toml", "Makefile"):
+    for support_file in ("install.sh", "setup.sh", "pyproject.toml", "Makefile"):
         src = project_root / support_file
         if src.exists():
             _copy_file_replace(src, INSTALL_DIR / support_file, support_file)
+            if support_file.endswith(".sh"):
+                (INSTALL_DIR / support_file).chmod(0o755)
             _ok(f"Installed {support_file} → {INSTALL_DIR / support_file}")
 
 
