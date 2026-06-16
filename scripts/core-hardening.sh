@@ -6,6 +6,15 @@
 # =============================================================================
 set -euo pipefail
 
+MEDIA_USER="media"
+MEDIA_HOME="/home/media"
+COSMOS_CONFIG_DIR="/srv/cosmos/config"
+COSMOS_STORAGE_DIR="/srv/cosmos-storage"
+APP_CONFIG_DIR="/srv/config"
+MEDIA_LIBRARY_DIR="/srv/media"
+BACKUP_DIR="/srv/backups"
+DOCKER_DATA_DIR="/srv/docker"
+
 cosmos_installed() {
   # Require the systemd unit file specifically. The previous OR-with-start.sh
   # check produced false positives when /opt/cosmos held leftover binaries
@@ -51,23 +60,46 @@ EOF
   chmod +x /opt/cosmos/start.sh
 fi
 
-# 2. Least-privilege user
-id media >/dev/null 2>&1 || useradd -m -s /bin/bash media
-if getent group docker >/dev/null 2>&1; then
-  usermod -aG docker media || true
+# 2. Least-privilege media/Cosmos user and /srv layout
+if id "$MEDIA_USER" >/dev/null 2>&1; then
+  usermod --shell /usr/sbin/nologin "$MEDIA_USER" || true
+else
+  useradd --create-home --home-dir "$MEDIA_HOME" --shell /usr/sbin/nologin "$MEDIA_USER"
 fi
+if getent group docker >/dev/null 2>&1; then
+  usermod -aG docker "$MEDIA_USER" || true
+fi
+
+ensure_dir() {
+  local path="$1" owner="$2" mode="$3"
+  mkdir -p "$path"
+  chown "$owner" "$path"
+  chmod "$mode" "$path"
+}
+
+ensure_dir "/srv/cosmos" "$MEDIA_USER:$MEDIA_USER" 0750
+ensure_dir "$COSMOS_CONFIG_DIR" "$MEDIA_USER:$MEDIA_USER" 0750
+ensure_dir "$COSMOS_STORAGE_DIR" "$MEDIA_USER:$MEDIA_USER" 0750
+ensure_dir "$APP_CONFIG_DIR" "$MEDIA_USER:$MEDIA_USER" 2775
+ensure_dir "$MEDIA_LIBRARY_DIR" "$MEDIA_USER:$MEDIA_USER" 2775
+ensure_dir "$BACKUP_DIR" "$MEDIA_USER:$MEDIA_USER" 0750
+ensure_dir "$DOCKER_DATA_DIR" root:root 0710
 
 # 3. Permissions wrapper
 # Runs from the systemd ExecStartPre with the `+` prefix (i.e. as root) so it
-# can create /var/lib/cosmos and reassign /opt/cosmos to the media user before
+# can keep /srv and /opt/cosmos ownership sane before
 # the launcher tries to chmod its binaries.
 cat > /usr/local/bin/fix-cosmos-perms <<'EOF'
 #!/usr/bin/env bash
 set -e
-mkdir -p /var/lib/cosmos
-# Ensure the top-level directories are owned by media so it can write inside them
-chown media:media /opt/cosmos /var/lib/cosmos
-chmod 755 /opt/cosmos /var/lib/cosmos
+mkdir -p /srv/cosmos/config /srv/cosmos-storage /srv/config /srv/media /srv/backups /srv/docker
+chown media:media /srv/cosmos /srv/cosmos/config /srv/cosmos-storage /srv/config /srv/media /srv/backups
+chown media:media /opt/cosmos
+chown root:root /srv/docker
+chmod 750 /srv/cosmos /srv/cosmos/config /srv/cosmos-storage /srv/backups
+chmod 2775 /srv/config /srv/media
+chmod 710 /srv/docker
+chmod 755 /opt/cosmos
 EOF
 chmod +x /usr/local/bin/fix-cosmos-perms
 
@@ -80,16 +112,54 @@ cat > /etc/systemd/system/CosmosCloud.service.d/override.conf <<'EOF'
 [Service]
 User=media
 Group=media
+SupplementaryGroups=docker
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+Environment=COSMOS_CONFIG_FOLDER=/srv/cosmos/config/
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/cosmos /srv/cosmos-storage /srv/config /srv/media /srv/backups /opt/cosmos
 ExecStartPre=+/usr/local/bin/fix-cosmos-perms
 EOF
 
 # 5. Docker configuration
 echo "[+] Ensuring Docker firewall authority is disabled..."
 mkdir -p /etc/docker
-if [[ ! -f /etc/docker/daemon.json ]]; then
-  echo '{"iptables": false, "ip6tables": false}' > /etc/docker/daemon.json
+DAEMON_JSON="$(python3 - /etc/docker/daemon.json <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    current = json.loads(path.read_text()) if path.exists() else {}
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"invalid JSON in {path}: {exc}")
+
+required = {
+    "data-root": "/srv/docker",
+    "iptables": False,
+    "ip6tables": False,
+    "log-driver": "json-file",
+}
+log_opts = dict(current.get("log-opts", {})) if isinstance(current.get("log-opts"), dict) else {}
+log_opts.update({"max-size": "100m", "max-file": "5"})
+
+merged = dict(current)
+merged.update(required)
+merged["log-opts"] = log_opts
+
+print(json.dumps(merged, indent=2, sort_keys=True))
+PY
+)"
+
+if [[ ! -f /etc/docker/daemon.json ]] || [[ "$(cat /etc/docker/daemon.json)" != "$DAEMON_JSON" ]]; then
+  if [[ -f /etc/docker/daemon.json ]]; then
+    cp /etc/docker/daemon.json "/etc/docker/daemon.json.nft-firewall.bak.$(date +%Y%m%d%H%M%S)"
+  fi
+  printf '%s\n' "$DAEMON_JSON" > /etc/docker/daemon.json
   systemctl restart docker || echo "[!] Docker restart failed (non-fatal)"
 fi
 

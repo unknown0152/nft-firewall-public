@@ -36,14 +36,12 @@ def test_step1_normalizes_required_user_model(monkeypatch):
     setup.step1_create_system_user()
 
     assert ("fw-admin", True, setup.SYSTEM_HOME, "/bin/false") in ensured_users
-    assert ("media", False, Path("/home/media"), "/bin/bash") in ensured_users
-    assert ("backup", False, Path("/home/backup"), "/bin/bash") in ensured_users
-    assert ("deploy", False, Path("/home/deploy"), "/bin/bash") in ensured_users
-    assert "docker" in ensured_groups
     assert ("fw-admin", "adm") in added_groups
-    assert ("media", "docker") in added_groups
-    assert ("nuc", "docker") in added_groups
     assert ("fw-admin", "docker") in removed_groups
+    assert not any(user == "media" for user, *_ in ensured_users)
+    assert not any(user == "backup" for user, *_ in ensured_users)
+    assert not any(user == "deploy" for user, *_ in ensured_users)
+    assert "docker" not in ensured_groups
 
 
 def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
@@ -53,8 +51,6 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     lib_dir = tmp_path / "var" / "lib" / "nft-firewall"
     log_dir = tmp_path / "var" / "log" / "nft-firewall"
     etc_dir = tmp_path / "etc" / "nft-firewall"
-    media_config = tmp_path / "srv" / "config"
-    cosmos_compose = media_config / "cosmos"
     calls = []
 
     monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
@@ -62,24 +58,20 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     monkeypatch.setattr(setup, "LOG_DIR", log_dir)
     monkeypatch.setattr(setup, "ETC_DIR", etc_dir)
     monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
-    monkeypatch.setattr(setup, "MEDIA_CONFIG_DIR", media_config)
-    monkeypatch.setattr(setup, "COSMOS_COMPOSE_DIR", cosmos_compose)
     monkeypatch.setattr(setup, "_run", lambda cmd, **_kw: calls.append(cmd))
 
     setup.step3_scaffold_dirs()
 
-    for path in (install_dir, lib_dir, log_dir, etc_dir, cosmos_compose):
+    for path in (install_dir, lib_dir, log_dir, etc_dir):
         assert path.exists()
     for path in (lib_dir, log_dir, etc_dir):
         assert path.stat().st_mode & 0o777 == 0o750
-    assert cosmos_compose.stat().st_mode & 0o7777 == 0o2770
     # Code dir is root-owned (group fw-admin) so daemons cannot rewrite their own code.
     assert ["chown", "-R", "root:fw-admin", str(install_dir)] in calls
     # Runtime/state dirs stay fw-admin-owned so daemons can write logs and state.
     for path in (lib_dir, log_dir, etc_dir):
         assert ["chown", "-R", "fw-admin:fw-admin", str(path)] in calls
-    assert ["chown", "-R", "media:media", str(cosmos_compose)] in calls
-    assert ["chown", "-R", "media:media", str(media_config)] not in calls
+    assert not any(call[:3] == ["chown", "-R", "media:media"] for call in calls)
 
 
 def test_existing_users_are_normalized_to_expected_home_and_shell(monkeypatch):

@@ -69,6 +69,8 @@ MEDIA_HOME         = Path("/home/media")
 BACKUP_HOME        = Path("/home/backup")
 DEPLOY_HOME        = Path("/home/deploy")
 MEDIA_CONFIG_DIR   = Path("/srv/config")
+COSMOS_CONFIG_DIR  = Path("/srv/cosmos/config")
+COSMOS_STORAGE_DIR = Path("/srv/cosmos-storage")
 COSMOS_COMPOSE_DIR = MEDIA_CONFIG_DIR / "cosmos"
 SUDOERS_FILE       = Path("/etc/sudoers.d/nft-firewall")
 SYSTEMD_DST        = Path("/etc/systemd/system")
@@ -607,14 +609,11 @@ def step0_configure(reconfigure: bool = False) -> None:
 # ── Step 1: User model ────────────────────────────────────────────────────────
 
 def step1_create_system_user() -> None:
-    """Create and normalize the nft-firewall host user model."""
+    """Create and normalize the core nft-firewall runtime user."""
     _header("Step 1 — User Model")
 
     _migrate_legacy_system_user()
     _ensure_user(SYSTEM_USER, system=True, home=SYSTEM_HOME, shell="/bin/false")
-    _ensure_user(MEDIA_USER, system=False, home=MEDIA_HOME, shell="/bin/bash")
-    _ensure_user(BACKUP_USER, system=False, home=BACKUP_HOME, shell="/bin/bash")
-    _ensure_user(DEPLOY_USER, system=False, home=DEPLOY_HOME, shell="/bin/bash")
 
     # 'adm' group membership lets fw-admin read /var/log/auth.log (ssh-alert)
     try:
@@ -623,12 +622,6 @@ def step1_create_system_user() -> None:
     except KeyError:
         _warn("Group 'adm' not found — ssh-alert may not be able to read auth.log")
 
-    _ensure_group("docker")
-    _ensure_supplementary_group(MEDIA_USER, "docker")
-    if _user_exists(ADMIN_USER):
-        _ensure_supplementary_group(ADMIN_USER, "docker")
-    else:
-        _warn(f"Admin user '{ADMIN_USER}' not found — skipping docker group convenience")
     _remove_supplementary_group(SYSTEM_USER, "docker")
     _ok(f"'{SYSTEM_USER}' is not granted Docker group access")
 
@@ -769,7 +762,7 @@ def step2_5_nft_preflight(src_path: Optional[Path] = None) -> None:
 # ── Step 3: Directories & ownership ──────────────────────────────────────────
 
 def step3_scaffold_dirs() -> None:
-    """Create runtime directories and apply firewall/media ownership.
+    """Create runtime directories and apply firewall ownership.
 
     INSTALL_DIR holds code that fw-admin daemons execute via sudo wrappers.
     It must be root-owned so a compromised daemon cannot rewrite main.py and
@@ -796,11 +789,6 @@ def step3_scaffold_dirs() -> None:
         d.chmod(0o750)
         _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(d)])
         _ok(f"chown -R {SYSTEM_USER}:{SYSTEM_USER}  {d}")
-
-    COSMOS_COMPOSE_DIR.mkdir(parents=True, exist_ok=True)
-    COSMOS_COMPOSE_DIR.chmod(0o2770)
-    _run(["chown", "-R", f"{MEDIA_USER}:{MEDIA_USER}", str(COSMOS_COMPOSE_DIR)])
-    _ok(f"chown -R {MEDIA_USER}:{MEDIA_USER}  {COSMOS_COMPOSE_DIR}")
 
 
 # ── Step 4: Sudoers ───────────────────────────────────────────────────────────
@@ -1268,7 +1256,6 @@ def cmd_install(reconfigure: bool = False) -> None:
     print("\033[32m\033[1m  Install complete.\033[0m")
     print(f"    Code        : {INSTALL_DIR}")
     print(f"    Running as  : {SYSTEM_USER}")
-    print(f"    Cosmos dir  : {COSMOS_COMPOSE_DIR}  (under /srv/config, owned by {MEDIA_USER})")
     print(f"    Logs        : journalctl -u nft-watchdog -f")
     print(f"    Sudoers     : {SUDOERS_FILE}")
     print(f"    Apply rules : sudo fw doctor && sudo fw safe-apply <profile>")
@@ -1276,14 +1263,11 @@ def cmd_install(reconfigure: bool = False) -> None:
     print("  User model:")
     print(f"    {ADMIN_USER:<8} human admin/dev user; copy and edit nft-firewall code as this user")
     print(f"    {SYSTEM_USER:<8} nft-firewall runtime/systemd user; no Docker group access")
-    print(f"    {MEDIA_USER:<8} Docker/Cosmos runtime user; Cosmos config workspace is {COSMOS_COMPOSE_DIR}")
-    print(f"    {BACKUP_USER:<8} backup user")
-    print(f"    {DEPLOY_USER:<8} rsync/deploy user")
     print()
     print("  Typical workflow:")
     print(f"    1. As {ADMIN_USER}: copy or git-clone this repo")
     print("    2. Install firewall: sudo python3 setup.py install")
-    print(f"    3. Keep Cosmos/media app config under /srv/config; Cosmos workspace: {COSMOS_COMPOSE_DIR}")
+    print("    3. Optional Cosmos/media setup: sudo bash setup.sh --with-integrations")
 
 
 def cmd_status() -> None:
@@ -1304,11 +1288,6 @@ def cmd_status() -> None:
             _ok(f"{d}")
         else:
             _warn(f"{d}  MISSING")
-    if COSMOS_COMPOSE_DIR.exists():
-        _ok(f"{COSMOS_COMPOSE_DIR}")
-    else:
-        _warn(f"{COSMOS_COMPOSE_DIR}  MISSING")
-
     # Sudoers
     if SUDOERS_FILE.exists():
         _ok(f"Sudoers: {SUDOERS_FILE}")

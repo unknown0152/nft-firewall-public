@@ -442,6 +442,31 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert 'if [[ "$RUN_INTEGRATIONS" -eq 1 ]]' in text
 
 
+def test_core_hardening_owns_optional_srv_cosmos_layout():
+    """Cosmos/media paths belong to the optional integration, not core setup."""
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
+    text = script.read_text()
+
+    assert 'COSMOS_CONFIG_DIR="/srv/cosmos/config"' in text
+    assert 'COSMOS_STORAGE_DIR="/srv/cosmos-storage"' in text
+    assert 'APP_CONFIG_DIR="/srv/config"' in text
+    assert 'MEDIA_LIBRARY_DIR="/srv/media"' in text
+    assert 'DOCKER_DATA_DIR="/srv/docker"' in text
+    assert "COSMOS_CONFIG_FOLDER=/srv/cosmos/config/" in text
+    assert "ReadWritePaths=/srv/cosmos /srv/cosmos-storage /srv/config /srv/media /srv/backups /opt/cosmos" in text
+
+
+def test_core_hardening_preserves_nft_firewall_docker_authority():
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
+    text = script.read_text()
+
+    assert '"data-root": "/srv/docker"' in text
+    assert '"iptables": False' in text
+    assert '"ip6tables": False' in text
+    assert '"max-size": "100m"' in text
+    assert '"max-file": "5"' in text
+
+
 def test_setup_sh_uses_public_repo_url_by_default():
     """Public bootstrap must not clone the private/live-history repo by default."""
     setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
