@@ -912,7 +912,12 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         '  echo "Keybase linux_user is not configured" >&2\n'
         "  exit 1\n"
         "fi\n"
-        'exec /usr/sbin/runuser -l "$kb_user" -c \'exec /usr/bin/keybase "$@"\' keybase "$@"\n'
+        'cmd="exec /usr/bin/keybase"\n'
+        'for arg in "$@"; do\n'
+        '  printf -v quoted " %q" "$arg"\n'
+        '  cmd+="$quoted"\n'
+        "done\n"
+        'exec /usr/sbin/runuser -l "$kb_user" -c "$cmd"\n'
     )
 
     wrapper.write_text(script)
