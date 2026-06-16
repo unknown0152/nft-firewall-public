@@ -64,8 +64,8 @@ INSTALL_DIR        = Path("/opt/nft-firewall")
 LOG_DIR            = Path("/var/log/nft-firewall")
 LIB_DIR            = Path("/var/lib/nft-firewall")
 ETC_DIR            = Path("/etc/nft-firewall")
-MEDIA_COMPOSE_DIR  = Path("/home/media/compose")
-COSMOS_COMPOSE_DIR = MEDIA_COMPOSE_DIR / "cosmos"
+MEDIA_CONFIG_DIR   = Path("/srv/config")
+COSMOS_COMPOSE_DIR = MEDIA_CONFIG_DIR / "cosmos"
 SUDOERS_FILE       = Path("/etc/sudoers.d/nft-firewall")
 SYSTEMD_DST        = Path("/etc/systemd/system")
 SYSTEMD_SRC        = Path(__file__).resolve().parent / "systemd"
@@ -779,8 +779,8 @@ def step3_scaffold_dirs() -> None:
         _ok(f"chown -R {SYSTEM_USER}:{SYSTEM_USER}  {d}")
 
     COSMOS_COMPOSE_DIR.mkdir(parents=True, exist_ok=True)
-    _run(["chown", "-R", f"{MEDIA_USER}:{MEDIA_USER}", str(MEDIA_COMPOSE_DIR)])
-    _ok(f"chown -R {MEDIA_USER}:{MEDIA_USER}  {MEDIA_COMPOSE_DIR}")
+    _run(["chown", "-R", f"{MEDIA_USER}:{MEDIA_USER}", str(COSMOS_COMPOSE_DIR)])
+    _ok(f"chown -R {MEDIA_USER}:{MEDIA_USER}  {COSMOS_COMPOSE_DIR}")
 
 
 # ── Step 4: Sudoers ───────────────────────────────────────────────────────────
@@ -1248,7 +1248,7 @@ def cmd_install(reconfigure: bool = False) -> None:
     print("\033[32m\033[1m  Install complete.\033[0m")
     print(f"    Code        : {INSTALL_DIR}")
     print(f"    Running as  : {SYSTEM_USER}")
-    print(f"    Compose     : {COSMOS_COMPOSE_DIR}  (run as {MEDIA_USER})")
+    print(f"    Cosmos dir  : {COSMOS_COMPOSE_DIR}  (under /srv/config, owned by {MEDIA_USER})")
     print(f"    Logs        : journalctl -u nft-watchdog -f")
     print(f"    Sudoers     : {SUDOERS_FILE}")
     print(f"    Apply rules : sudo fw doctor && sudo fw safe-apply <profile>")
@@ -1256,14 +1256,14 @@ def cmd_install(reconfigure: bool = False) -> None:
     print("  User model:")
     print(f"    {ADMIN_USER:<8} human admin/dev user; copy and edit nft-firewall code as this user")
     print(f"    {SYSTEM_USER:<8} nft-firewall runtime/systemd user; no Docker group access")
-    print(f"    {MEDIA_USER:<8} Docker/Cosmos/compose runtime user; compose lives under {COSMOS_COMPOSE_DIR}")
+    print(f"    {MEDIA_USER:<8} Docker/Cosmos runtime user; Cosmos config workspace is {COSMOS_COMPOSE_DIR}")
     print(f"    {BACKUP_USER:<8} backup user")
     print(f"    {DEPLOY_USER:<8} rsync/deploy user")
     print()
     print("  Typical workflow:")
     print(f"    1. As {ADMIN_USER}: copy or git-clone this repo")
     print("    2. Install firewall: sudo python3 setup.py install")
-    print(f"    3. Run Cosmos compose as {MEDIA_USER} from {COSMOS_COMPOSE_DIR}")
+    print(f"    3. Keep Cosmos/media app config under /srv/config; Cosmos workspace: {COSMOS_COMPOSE_DIR}")
 
 
 def cmd_status() -> None:

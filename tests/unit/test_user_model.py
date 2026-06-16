@@ -53,8 +53,8 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     lib_dir = tmp_path / "var" / "lib" / "nft-firewall"
     log_dir = tmp_path / "var" / "log" / "nft-firewall"
     etc_dir = tmp_path / "etc" / "nft-firewall"
-    media_compose = tmp_path / "home" / "media" / "compose"
-    cosmos_compose = media_compose / "cosmos"
+    media_config = tmp_path / "srv" / "config"
+    cosmos_compose = media_config / "cosmos"
     calls = []
 
     monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
@@ -62,7 +62,7 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     monkeypatch.setattr(setup, "LOG_DIR", log_dir)
     monkeypatch.setattr(setup, "ETC_DIR", etc_dir)
     monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
-    monkeypatch.setattr(setup, "MEDIA_COMPOSE_DIR", media_compose)
+    monkeypatch.setattr(setup, "MEDIA_CONFIG_DIR", media_config)
     monkeypatch.setattr(setup, "COSMOS_COMPOSE_DIR", cosmos_compose)
     monkeypatch.setattr(setup, "_run", lambda cmd, **_kw: calls.append(cmd))
 
@@ -75,7 +75,8 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     # Runtime/state dirs stay fw-admin-owned so daemons can write logs and state.
     for path in (lib_dir, log_dir, etc_dir):
         assert ["chown", "-R", "fw-admin:fw-admin", str(path)] in calls
-    assert ["chown", "-R", "media:media", str(media_compose)] in calls
+    assert ["chown", "-R", "media:media", str(cosmos_compose)] in calls
+    assert ["chown", "-R", "media:media", str(media_config)] not in calls
 
 
 def test_sudoers_uses_fw_admin_and_not_legacy_nft_firewall(monkeypatch, tmp_path):
