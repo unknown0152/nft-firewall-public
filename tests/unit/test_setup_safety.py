@@ -452,8 +452,12 @@ def test_core_hardening_owns_optional_srv_cosmos_layout():
     assert 'APP_CONFIG_DIR="/srv/config"' in text
     assert 'MEDIA_LIBRARY_DIR="/srv/media"' in text
     assert 'DOCKER_DATA_DIR="/srv/docker"' in text
+    assert 'COSMOS_CONFIG_FILE="$COSMOS_CONFIG_DIR/cosmos.config.json"' in text
     assert "COSMOS_CONFIG_FOLDER=/srv/cosmos/config/" in text
+    assert "COSMOS_HTTP_PORT=80" in text
+    assert "COSMOS_HTTPS_PORT=443" in text
     assert "ReadWritePaths=/srv/cosmos /srv/cosmos-storage /srv/config /srv/media /srv/backups /opt/cosmos" in text
+    assert '"DefaultDataPath") != default_data_path' in text
 
 
 def test_core_hardening_preserves_nft_firewall_docker_authority():
@@ -465,6 +469,17 @@ def test_core_hardening_preserves_nft_firewall_docker_authority():
     assert '"ip6tables": False' in text
     assert '"max-size": "100m"' in text
     assert '"max-file": "5"' in text
+
+
+def test_core_hardening_uses_documented_cosmos_standalone_flags():
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
+    text = script.read_text()
+
+    assert 'COSMOS_INSTALLER_FLAGS="${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}"' in text
+    assert 'export COSMOS_CONFIG_FOLDER="$COSMOS_CONFIG_DIR/"' in text
+    assert 'bash "$COSMOS_INSTALLER" $COSMOS_INSTALLER_FLAGS' in text
+    assert 'bash "$COSMOS_INSTALLER"' in text
+    assert 'bash "$COSMOS_INSTALLER"\n' not in text
 
 
 def test_setup_sh_uses_public_repo_url_by_default():

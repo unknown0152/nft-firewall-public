@@ -9,11 +9,13 @@ set -euo pipefail
 MEDIA_USER="media"
 MEDIA_HOME="/home/media"
 COSMOS_CONFIG_DIR="/srv/cosmos/config"
+COSMOS_CONFIG_FILE="$COSMOS_CONFIG_DIR/cosmos.config.json"
 COSMOS_STORAGE_DIR="/srv/cosmos-storage"
 APP_CONFIG_DIR="/srv/config"
 MEDIA_LIBRARY_DIR="/srv/media"
 BACKUP_DIR="/srv/backups"
 DOCKER_DATA_DIR="/srv/docker"
+COSMOS_INSTALLER_FLAGS="${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}"
 
 cosmos_installed() {
   # Require the systemd unit file specifically. The previous OR-with-start.sh
@@ -41,9 +43,11 @@ else
   # We prepend the override to the script so it is defined before any calls
   sed -i '1a check_ports() { echo "[+] Skipping Cosmos iptables; nft-firewall active."; }' "$COSMOS_INSTALLER"
   
-  echo "[+] Running Cosmos installer (NO_DOCKER=1)..."
+  echo "[+] Running Cosmos standalone installer ($COSMOS_INSTALLER_FLAGS)..."
+  export COSMOS_CONFIG_FOLDER="$COSMOS_CONFIG_DIR/"
   export NO_DOCKER=1
-  bash "$COSMOS_INSTALLER"
+  # shellcheck disable=SC2086
+  bash "$COSMOS_INSTALLER" $COSMOS_INSTALLER_FLAGS
   echo "[ok] Cosmos installer finished"
 fi
 
@@ -68,6 +72,8 @@ else
 fi
 if getent group docker >/dev/null 2>&1; then
   usermod -aG docker "$MEDIA_USER" || true
+else
+  echo "[!] Docker group missing. Install/start Docker before using Cosmos to manage containers."
 fi
 
 ensure_dir() {
@@ -84,6 +90,26 @@ ensure_dir "$APP_CONFIG_DIR" "$MEDIA_USER:$MEDIA_USER" 2775
 ensure_dir "$MEDIA_LIBRARY_DIR" "$MEDIA_USER:$MEDIA_USER" 2775
 ensure_dir "$BACKUP_DIR" "$MEDIA_USER:$MEDIA_USER" 0750
 ensure_dir "$DOCKER_DATA_DIR" root:root 0710
+
+if [[ -f "$COSMOS_CONFIG_FILE" ]]; then
+  python3 - "$COSMOS_CONFIG_FILE" "$COSMOS_STORAGE_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+default_data_path = sys.argv[2]
+config = json.loads(path.read_text())
+docker_config = config.setdefault("DockerConfig", {})
+if docker_config.get("DefaultDataPath") != default_data_path:
+    docker_config["DefaultDataPath"] = default_data_path
+    path.write_text(json.dumps(config, indent=2))
+PY
+  chown "$MEDIA_USER:$MEDIA_USER" "$COSMOS_CONFIG_FILE"
+else
+  echo "[i] $COSMOS_CONFIG_FILE not found yet; Cosmos will create it on first startup."
+  echo "    Re-run this integration after first setup to enforce DefaultDataPath=$COSMOS_STORAGE_DIR."
+fi
 
 # 3. Permissions wrapper
 # Runs from the systemd ExecStartPre with the `+` prefix (i.e. as root) so it
@@ -117,6 +143,8 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 Environment=COSMOS_CONFIG_FOLDER=/srv/cosmos/config/
+Environment=COSMOS_HTTP_PORT=80
+Environment=COSMOS_HTTPS_PORT=443
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
@@ -171,6 +199,22 @@ systemctl daemon-reload
 if [[ -f /etc/systemd/system/CosmosCloud.service ]]; then
   echo "[+] Restarting CosmosCloud with new security profile..."
   systemctl restart CosmosCloud || echo "[!] CosmosCloud restart failed"
+  if [[ -f "$COSMOS_CONFIG_FILE" ]]; then
+    python3 - "$COSMOS_CONFIG_FILE" "$COSMOS_STORAGE_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+default_data_path = sys.argv[2]
+config = json.loads(path.read_text())
+docker_config = config.setdefault("DockerConfig", {})
+if docker_config.get("DefaultDataPath") != default_data_path:
+    docker_config["DefaultDataPath"] = default_data_path
+    path.write_text(json.dumps(config, indent=2))
+PY
+    chown "$MEDIA_USER:$MEDIA_USER" "$COSMOS_CONFIG_FILE"
+  fi
 fi
 
 # 7. Keybase Optional setup
