@@ -476,6 +476,7 @@ def test_core_hardening_uses_documented_cosmos_standalone_flags():
     text = script.read_text()
 
     assert 'COSMOS_INSTALLER_FLAGS="${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}"' in text
+    assert "ensure_package_command unzip unzip" in text
     assert 'export COSMOS_CONFIG_FOLDER="$COSMOS_CONFIG_DIR/"' in text
     assert 'bash "$COSMOS_INSTALLER" $COSMOS_INSTALLER_FLAGS' in text
     assert 'bash "$COSMOS_INSTALLER"' in text

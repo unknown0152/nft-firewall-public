@@ -17,6 +17,13 @@ BACKUP_DIR="/srv/backups"
 DOCKER_DATA_DIR="/srv/docker"
 COSMOS_INSTALLER_FLAGS="${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}"
 
+ensure_package_command() {
+  local command_name="$1" package_name="$2"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    apt-get update -qq && apt-get install -y "$package_name" >/dev/null
+  fi
+}
+
 cosmos_installed() {
   # Require the systemd unit file specifically. The previous OR-with-start.sh
   # check produced false positives when /opt/cosmos held leftover binaries
@@ -32,10 +39,8 @@ if cosmos_installed; then
 else
   echo "[+] Downloading Cosmos installer..."
   COSMOS_INSTALLER="$(mktemp /tmp/cosmos-get.XXXXXX.sh)"
-  # Check for curl again just in case
-  if ! command -v curl >/dev/null 2>&1; then
-      apt-get update -qq && apt-get install -y curl >/dev/null
-  fi
+  ensure_package_command curl curl
+  ensure_package_command unzip unzip
   curl -sfL https://cosmos-cloud.io/get.sh -o "$COSMOS_INSTALLER"
   chmod +x "$COSMOS_INSTALLER"
 
