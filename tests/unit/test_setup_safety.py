@@ -553,6 +553,15 @@ def test_install_sh_writes_timestamped_install_log():
     assert 'echo "[+] Install log: $LOG_FILE"' in text
 
 
+def test_shell_installers_support_debug_tracing():
+    root = Path(__file__).resolve().parent.parent.parent
+    for relative in ("install.sh", "setup.sh", "scripts/core-hardening.sh"):
+        text = (root / relative).read_text()
+        assert 'NFT_FIREWALL_DEBUG:-0' in text
+        assert 'set -x' in text
+        assert 'PS4=' in text
+
+
 def test_setup_installs_curl_entrypoint_locally():
     setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
     text = setup_py.read_text()

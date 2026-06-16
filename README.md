@@ -70,6 +70,14 @@ curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/mai
 The curl entrypoint prints normally and also writes a root-only install log under
 `/var/log/nft-firewall/install-*.log` for troubleshooting.
 
+For a verbose debug install log, keep `--with-integrations` on the same shell
+command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh \
+  | sudo NFT_FIREWALL_INSTALL_LOG=/root/nft-firewall-install-debug.log NFT_FIREWALL_DEBUG=1 bash -s -- --with-integrations
+```
+
 After the core install, validate before applying firewall rules:
 
 ```bash

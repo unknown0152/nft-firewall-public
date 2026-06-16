@@ -6,6 +6,11 @@
 # =============================================================================
 set -euo pipefail
 
+if [[ "${NFT_FIREWALL_DEBUG:-0}" == "1" ]]; then
+  export PS4='+ ${BASH_SOURCE##*/}:${LINENO}: '
+  set -x
+fi
+
 MEDIA_USER="media"
 MEDIA_HOME="/home/media"
 COSMOS_CONFIG_DIR="/srv/cosmos/config"

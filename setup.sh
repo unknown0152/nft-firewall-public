@@ -7,6 +7,11 @@
 # =============================================================================
 set -euo pipefail
 
+if [[ "${NFT_FIREWALL_DEBUG:-0}" == "1" ]]; then
+    export PS4='+ ${BASH_SOURCE##*/}:${LINENO}: '
+    set -x
+fi
+
 RUN_INTEGRATIONS=0
 for arg in "$@"; do
     case "$arg" in

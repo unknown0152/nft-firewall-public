@@ -30,6 +30,11 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "[+] Install log: $LOG_FILE"
 
+if [[ "${NFT_FIREWALL_DEBUG:-0}" == "1" ]]; then
+  export PS4='+ ${BASH_SOURCE##*/}:${LINENO}: '
+  set -x
+fi
+
 tmp="$(mktemp /tmp/nft-firewall-setup.XXXXXX.sh)"
 cleanup() {
   rm -f "$tmp"
