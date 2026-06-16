@@ -248,13 +248,18 @@ echo ""
 echo "[+] Finalizing verification..."
 if [[ -f "/opt/nft-firewall/src/main.py" ]]; then
   PROF=$(grep "profile =" /opt/nft-firewall/config/firewall.ini | cut -d'=' -f2 | xargs || echo "cosmos-vpn-secure")
-  echo "[+] Activating firewall rules for profile: $PROF..."
-  
-  # Run main.py directly to bypass wrapper restriction (bypass safe-mode for initial setup)
-  if sudo PYTHONPATH=/opt/nft-firewall/src /usr/bin/python3 /opt/nft-firewall/src/main.py apply "$PROF"; then
+  echo "[+] Validating firewall rules for profile: $PROF..."
+
+  if sudo PYTHONPATH=/opt/nft-firewall/src /usr/bin/python3 /opt/nft-firewall/src/main.py simulate "$PROF" >/dev/null; then
+    echo "[+] Activating firewall rules for profile: $PROF..."
+    # Run main.py directly to bypass wrapper restriction (bypass safe-mode for initial setup)
+    if sudo PYTHONPATH=/opt/nft-firewall/src /usr/bin/python3 /opt/nft-firewall/src/main.py apply "$PROF"; then
       echo "[ok] Firewall rules applied successfully"
-  else
+    else
       echo "[!] Firewall rules application failed"
+    fi
+  else
+    echo "[!] Firewall rules validation failed; skipping automatic apply"
   fi
   
   # Check status via wrapper

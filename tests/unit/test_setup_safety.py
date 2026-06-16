@@ -420,6 +420,13 @@ def test_setup_sh_does_not_clobber_existing_resolv_conf():
             assert "! [ -e /etc/resolv.conf ]" in text
 
 
+def test_setup_sh_does_not_replace_systemd_resolved_with_openresolv():
+    setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
+    text = setup_sh.read_text()
+
+    assert "openresolv" not in text
+
+
 def test_setup_sh_fails_hard_on_core_install_failure():
     """setup.sh must not continue into integrations after setup.py fails."""
     setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
@@ -484,6 +491,16 @@ def test_core_hardening_uses_documented_cosmos_standalone_flags():
     assert 'bash "$COSMOS_INSTALLER"\n' not in text
     assert "nft-firewall controls firewall policy" in text
     assert 'COSMOS_SUPPLEMENTARY_GROUPS="SupplementaryGroups=docker"' in text
+
+
+def test_core_hardening_simulates_before_optional_auto_apply():
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
+    text = script.read_text()
+
+    assert 'main.py simulate "$PROF"' in text
+    assert "Firewall rules validation failed; skipping automatic apply" in text
+    assert text.index('main.py simulate "$PROF"') < text.index('main.py apply "$PROF"')
+
 
 
 def test_setup_sh_uses_public_repo_url_by_default():
