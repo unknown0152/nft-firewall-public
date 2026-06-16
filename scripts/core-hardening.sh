@@ -21,6 +21,7 @@ MEDIA_LIBRARY_DIR="/srv/media"
 BACKUP_DIR="/srv/backups"
 DOCKER_DATA_DIR="/srv/docker"
 INSTALL_DOCKER="${NFT_FIREWALL_INSTALL_DOCKER:-0}"
+INSTALL_KEYBASE="${NFT_FIREWALL_INSTALL_KEYBASE:-0}"
 NFT_COSMOS_INSTALLER_FLAGS="${NFT_COSMOS_INSTALLER_FLAGS:-${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}}"
 unset COSMOS_INSTALLER_FLAGS
 
@@ -107,6 +108,29 @@ install_docker_engine() {
   apt-get update -qq
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
+}
+
+install_keybase_package() {
+  if command -v keybase >/dev/null 2>&1; then
+    echo "[ok] Keybase already present"
+    return
+  fi
+
+  if [[ "$INSTALL_KEYBASE" != "1" ]]; then
+    echo "[!] Keybase missing. Re-run with --with-keybase to install ChatOps support."
+    return
+  fi
+
+  echo "[+] Installing Keybase Linux package..."
+  tmp_dir="$(mktemp -d /tmp/keybase-install.XXXXXX)"
+  trap 'rm -rf "$tmp_dir"' RETURN
+  curl -fsSL https://prerelease.keybase.io/keybase_amd64.deb -o "$tmp_dir/keybase_amd64.deb"
+  apt-get update -qq
+  apt-get install -y "$tmp_dir/keybase_amd64.deb"
+  rm -rf "$tmp_dir"
+  trap - RETURN
+  echo "[!] Keybase installed. Log in as the configured Linux user, not root."
+  echo "    Example: sudo -iu <linux_user> run_keybase -g && sudo -iu <linux_user> keybase login"
 }
 
 cosmos_installed() {
@@ -269,22 +293,7 @@ fi
 
 # 7. Keybase Optional setup
 echo "[+] Checking for Keybase ChatOps..."
-if ! command -v keybase >/dev/null 2>&1; then
-  # Try to read install choice if running interactively
-  if [[ -t 0 ]]; then
-      read -r -p "  Would you like to install Keybase for ChatOps? [y/N]: " install_kb
-      if [[ "$install_kb" =~ ^[Yy]$ ]]; then
-        echo "[+] Downloading Keybase..."
-        curl -sfL https://prerelease.keybase.io/keybase_amd64.deb -o keybase_amd64.deb
-        echo "[+] Installing Keybase..."
-        apt-get update -qq && apt-get install -y ./keybase_amd64.deb >/dev/null
-        rm keybase_amd64.deb
-        echo "[!] Keybase installed. IMPORTANT: Run 'keybase login' after this script."
-      fi
-  fi
-else
-  echo "[ok] Keybase already present"
-fi
+install_keybase_package
 
 # 8. Verification & Auto-Apply
 echo ""

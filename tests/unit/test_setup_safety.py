@@ -463,10 +463,14 @@ def test_setup_sh_integrations_are_explicit_opt_in():
 
     assert "RUN_INTEGRATIONS=0" in text
     assert "INSTALL_DOCKER=0" in text
+    assert "INSTALL_KEYBASE=0" in text
     assert "--with-integrations" in text
     assert "--with-docker" in text
+    assert "--with-keybase" in text
     assert 'INSTALL_DOCKER=1' in text
+    assert 'INSTALL_KEYBASE=1' in text
     assert 'export NFT_FIREWALL_INSTALL_DOCKER="$INSTALL_DOCKER"' in text
+    assert 'export NFT_FIREWALL_INSTALL_KEYBASE="$INSTALL_KEYBASE"' in text
     assert "Skipping optional Cosmos/Keybase hardening" in text
     assert 'if [[ "$RUN_INTEGRATIONS" -eq 1 ]]' in text
 
@@ -513,6 +517,19 @@ def test_core_hardening_can_install_docker_engine_explicitly():
     assert 'docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin' in text
     assert 'systemctl enable --now docker' in text
     assert text.index('install_docker_engine') < text.index('if cosmos_installed')
+
+
+def test_core_hardening_can_install_keybase_explicitly():
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
+    text = script.read_text()
+
+    assert 'INSTALL_KEYBASE="${NFT_FIREWALL_INSTALL_KEYBASE:-0}"' in text
+    assert "install_keybase_package" in text
+    assert "https://prerelease.keybase.io/keybase_amd64.deb" in text
+    assert 'apt-get install -y "$tmp_dir/keybase_amd64.deb"' in text
+    assert "run_keybase -g" in text
+    assert "keybase login" in text
+    assert text.index("Checking for Keybase ChatOps") < text.rindex("install_keybase_package")
 
 
 def test_core_hardening_uses_documented_cosmos_standalone_flags():
