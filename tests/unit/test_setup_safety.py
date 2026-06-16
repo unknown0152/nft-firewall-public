@@ -62,6 +62,16 @@ def test_watchdog_unit_uses_privileged_systemctl_wrapper():
     assert "ExecStartPre=-/usr/bin/sudo /usr/bin/systemctl start wg-quick@wg0.service" not in text
 
 
+def test_systemctl_wrapper_skips_start_when_wireguard_interface_exists():
+    setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
+    text = setup_py.read_text()
+
+    assert 'unit="${2%.service}"' in text
+    assert 'iface="${unit#wg-quick@}"' in text
+    assert '/usr/bin/ip link show dev "$iface"' in text
+    assert 'exit 0' in text
+
+
 def test_unit_patching_uses_configured_wireguard_interface(monkeypatch, tmp_path):
     import setup
 
@@ -563,7 +573,13 @@ def test_step7_resolves_endpoint_without_rewriting_wireguard_config(monkeypatch,
     monkeypatch.setattr(setup, "_CONF_FILE", ini)
     monkeypatch.setattr(setup, "Path", lambda value: wg_conf if value == "/etc/wireguard/wg-test.conf" else Path(value))
     monkeypatch.setattr(socket, "gethostbyname", lambda _host: "203.0.113.10")
-    monkeypatch.setattr(setup, "_run", lambda cmd, **_kw: calls.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})())
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        rc = 1 if cmd[:4] == ["ip", "link", "show", "dev"] else 0
+        return type("R", (), {"returncode": rc, "stderr": ""})()
+
+    monkeypatch.setattr(setup, "_run", fake_run)
     monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
     monkeypatch.setattr(setup, "_info", lambda *a, **kw: None)
     monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
@@ -574,7 +590,45 @@ def test_step7_resolves_endpoint_without_rewriting_wireguard_config(monkeypatch,
     assert wg_conf.read_text() == original
     assert "vpn_server_ip = 203.0.113.10" in ini.read_text()
     assert ["systemctl", "enable", "wg-quick@wg-test"] in calls
-    assert ["systemctl", "restart", "wg-quick@wg-test"] in calls
+    assert ["systemctl", "start", "wg-quick@wg-test"] in calls
+
+
+def test_step7_skips_start_when_wireguard_interface_already_exists(monkeypatch, tmp_path):
+    import setup
+
+    install_dir = tmp_path / "opt" / "nft-firewall"
+    config_dir = install_dir / "config"
+    config_dir.mkdir(parents=True)
+    ini = config_dir / "firewall.ini"
+    ini.write_text("[network]\nvpn_interface = wg-test\n")
+
+    wg_dir = tmp_path / "etc" / "wireguard"
+    wg_dir.mkdir(parents=True)
+    wg_conf = wg_dir / "wg-test.conf"
+    wg_conf.write_text("[Interface]\nPrivateKey = test\n")
+
+    calls = []
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
+    monkeypatch.setattr(setup, "_CONF_FILE", ini)
+    monkeypatch.setattr(setup, "Path", lambda value: wg_conf if value == "/etc/wireguard/wg-test.conf" else Path(value))
+    monkeypatch.setattr(setup, "_run", fake_run)
+    monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_info", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
+
+    setup.step7_activate_vpn()
+
+    assert ["systemctl", "enable", "wg-quick@wg-test"] in calls
+    assert ["ip", "link", "show", "dev", "wg-test"] in calls
+    assert ["systemctl", "reset-failed", "wg-quick@wg-test"] in calls
+    assert ["systemctl", "start", "wg-quick@wg-test"] not in calls
+    assert ["systemctl", "restart", "wg-quick@wg-test"] not in calls
 
 
 def test_state_dirs_remain_fw_admin_owned(monkeypatch):

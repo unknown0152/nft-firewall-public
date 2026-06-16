@@ -1048,7 +1048,19 @@ exit 126
     _write_executable(WRAPPER_DIR / "fw-systemctl", """#!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
-  start|stop|restart|reload)
+  start)
+    case "${2:-}" in
+      wg-quick@*.service|wg-quick@*)
+        unit="${2%.service}"
+        iface="${unit#wg-quick@}"
+        if /usr/bin/ip link show dev "$iface" >/dev/null 2>&1; then
+          exit 0
+        fi
+        exec /usr/bin/systemctl "$@"
+        ;;
+    esac
+    ;;
+  stop|restart|reload)
     case "${2:-}" in wg-quick@*.service|wg-quick@*) exec /usr/bin/systemctl "$@" ;; esac
     ;;
 esac
@@ -1233,7 +1245,12 @@ def step7_activate_vpn() -> None:
     unit = f"wg-quick@{vpn_if}"
     _info(f"Found {wg_conf} — enabling {unit}.service ...")
     _run(["systemctl", "enable", unit], check=False)
-    r = _run(["systemctl", "restart", unit], check=False)
+    if _run(["ip", "link", "show", "dev", vpn_if], check=False).returncode == 0:
+        _run(["systemctl", "reset-failed", unit], check=False)
+        _ok(f"{vpn_if} already exists — leaving tunnel up and skipping {unit}.service start")
+        return
+
+    r = _run(["systemctl", "start", unit], check=False)
     if r.returncode == 0:
         _ok(f"{unit}.service started")
     else:
