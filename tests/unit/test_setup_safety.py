@@ -605,6 +605,8 @@ def test_shell_installers_support_debug_tracing():
         assert 'NFT_FIREWALL_DEBUG:-0' in text
         assert 'set -x' in text
         assert 'PS4=' in text
+        assert 'BASH_SOURCE' not in text
+        assert '${0##*/}' in text
 
 
 def test_setup_installs_curl_entrypoint_locally():

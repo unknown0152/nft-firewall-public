@@ -31,7 +31,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "[+] Install log: $LOG_FILE"
 
 if [[ "${NFT_FIREWALL_DEBUG:-0}" == "1" ]]; then
-  export PS4='+ ${BASH_SOURCE##*/}:${LINENO}: '
+  export PS4='+ ${0##*/}:${LINENO}: '
   set -x
 fi
 
