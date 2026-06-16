@@ -74,6 +74,12 @@ management, and Keybase package installation:
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker --with-keybase
 ```
 
+To install Keybase and launch its interactive login prompt during setup, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker --with-keybase-login
+```
+
 The curl entrypoint prints normally and also writes a root-only install log under
 `/var/log/nft-firewall/install-*.log` for troubleshooting.
 
@@ -82,7 +88,7 @@ command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh \
-  | sudo NFT_FIREWALL_INSTALL_LOG=/root/nft-firewall-install-debug.log NFT_FIREWALL_DEBUG=1 bash -s -- --with-integrations --with-docker --with-keybase
+  | sudo NFT_FIREWALL_INSTALL_LOG=/root/nft-firewall-install-debug.log NFT_FIREWALL_DEBUG=1 bash -s -- --with-integrations --with-docker --with-keybase-login
 ```
 
 After the core install, validate before applying firewall rules:
@@ -99,10 +105,12 @@ Engine from Docker's Debian repository only after writing `/etc/docker/daemon.js
 with `iptables=false`, `ip6tables=false`, and `data-root=/srv/docker`, so
 nft-firewall remains the firewall authority.
 
-The `--with-keybase` path installs the Keybase Linux package. Keybase login is
-still manual and must be run as the configured Linux user, not root. After
-logging in, re-run `sudo python3 /opt/nft-firewall/setup.py install --reconfigure`
-if the initial firewall config was created with blank Keybase fields.
+The `--with-keybase` path installs the Keybase Linux package, detects the
+configured Linux user, and reports whether Keybase is logged in. The
+`--with-keybase-login` path additionally starts Keybase headless and launches
+the interactive `keybase login` prompt as that Linux user. After logging in,
+re-run `sudo python3 /opt/nft-firewall/setup.py install --reconfigure` if the
+initial firewall config was created with blank Keybase fields.
 
 Clean-VM validation covered the installer path without Keybase or a real
 WireGuard provider. Cosmos starts without Docker, but container management

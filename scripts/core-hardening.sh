@@ -22,6 +22,7 @@ BACKUP_DIR="/srv/backups"
 DOCKER_DATA_DIR="/srv/docker"
 INSTALL_DOCKER="${NFT_FIREWALL_INSTALL_DOCKER:-0}"
 INSTALL_KEYBASE="${NFT_FIREWALL_INSTALL_KEYBASE:-0}"
+KEYBASE_LOGIN="${NFT_FIREWALL_KEYBASE_LOGIN:-0}"
 NFT_COSMOS_INSTALLER_FLAGS="${NFT_COSMOS_INSTALLER_FLAGS:-${COSMOS_INSTALLER_FLAGS:---no-docker --no-dep}}"
 unset COSMOS_INSTALLER_FLAGS
 
@@ -131,6 +132,68 @@ install_keybase_package() {
   trap - RETURN
   echo "[!] Keybase installed. Log in as the configured Linux user, not root."
   echo "    Example: sudo -iu <linux_user> run_keybase -g && sudo -iu <linux_user> keybase login"
+}
+
+detect_keybase_linux_user() {
+  python3 - <<'PY'
+import configparser
+import os
+import pwd
+from pathlib import Path
+
+cfg = configparser.ConfigParser()
+cfg.read("/opt/nft-firewall/config/firewall.ini")
+explicit = cfg.get("keybase", "linux_user", fallback="").strip()
+if explicit:
+    print(explicit)
+    raise SystemExit
+
+sudo_user = os.environ.get("SUDO_USER", "").strip()
+if sudo_user and sudo_user != "root":
+    print(sudo_user)
+    raise SystemExit
+
+for pw in pwd.getpwall():
+    if pw.pw_uid >= 1000 and pw.pw_name != "nobody" and Path(pw.pw_dir).is_dir():
+        print(pw.pw_name)
+        raise SystemExit
+PY
+}
+
+maybe_run_keybase_login() {
+  if ! command -v keybase >/dev/null 2>&1; then
+    return
+  fi
+
+  kb_user="$(detect_keybase_linux_user || true)"
+  if [[ -z "$kb_user" ]] || ! id "$kb_user" >/dev/null 2>&1; then
+    echo "[!] Keybase installed, but no usable Linux user was detected."
+    echo "    Re-run setup.py --reconfigure and set [keybase] linux_user."
+    return
+  fi
+
+  echo "[+] Keybase Linux user: $kb_user"
+  if sudo -iu "$kb_user" keybase status >/dev/null 2>&1; then
+    whoami_out="$(sudo -iu "$kb_user" keybase whoami 2>/dev/null || true)"
+    echo "[ok] Keybase already logged in${whoami_out:+ as $whoami_out}"
+    return
+  fi
+
+  echo "[+] Starting Keybase headless for $kb_user..."
+  sudo -iu "$kb_user" sh -c 'run_keybase -g >/tmp/nft-firewall-keybase-run.log 2>&1' || true
+  sleep 2
+
+  if [[ "$KEYBASE_LOGIN" == "1" && -r /dev/tty ]]; then
+    echo "[+] Launching interactive Keybase login for $kb_user..."
+    sudo -iu "$kb_user" sh -c 'keybase login </dev/tty'
+    return
+  fi
+
+  echo "[!] Keybase is installed but not logged in."
+  echo "    Run:"
+  echo "      sudo -iu $kb_user run_keybase -g"
+  echo "      sudo -iu $kb_user keybase login"
+  echo "    Then re-run setup.py --reconfigure if [keybase] was left blank."
 }
 
 cosmos_installed() {
@@ -294,6 +357,7 @@ fi
 # 7. Keybase Optional setup
 echo "[+] Checking for Keybase ChatOps..."
 install_keybase_package
+maybe_run_keybase_login
 
 # 8. Verification & Auto-Apply
 echo ""

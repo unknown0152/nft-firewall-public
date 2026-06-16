@@ -464,13 +464,17 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert "RUN_INTEGRATIONS=0" in text
     assert "INSTALL_DOCKER=0" in text
     assert "INSTALL_KEYBASE=0" in text
+    assert "KEYBASE_LOGIN=0" in text
     assert "--with-integrations" in text
     assert "--with-docker" in text
     assert "--with-keybase" in text
+    assert "--with-keybase-login" in text
     assert 'INSTALL_DOCKER=1' in text
     assert 'INSTALL_KEYBASE=1' in text
+    assert 'KEYBASE_LOGIN=1' in text
     assert 'export NFT_FIREWALL_INSTALL_DOCKER="$INSTALL_DOCKER"' in text
     assert 'export NFT_FIREWALL_INSTALL_KEYBASE="$INSTALL_KEYBASE"' in text
+    assert 'export NFT_FIREWALL_KEYBASE_LOGIN="$KEYBASE_LOGIN"' in text
     assert "Skipping optional Cosmos/Keybase hardening" in text
     assert 'if [[ "$RUN_INTEGRATIONS" -eq 1 ]]' in text
 
@@ -524,11 +528,16 @@ def test_core_hardening_can_install_keybase_explicitly():
     text = script.read_text()
 
     assert 'INSTALL_KEYBASE="${NFT_FIREWALL_INSTALL_KEYBASE:-0}"' in text
+    assert 'KEYBASE_LOGIN="${NFT_FIREWALL_KEYBASE_LOGIN:-0}"' in text
     assert "install_keybase_package" in text
+    assert "detect_keybase_linux_user" in text
+    assert "maybe_run_keybase_login" in text
     assert "https://prerelease.keybase.io/keybase_amd64.deb" in text
     assert 'apt-get install -y "$tmp_dir/keybase_amd64.deb"' in text
     assert "run_keybase -g" in text
     assert "keybase login" in text
+    assert "sh -c 'keybase login </dev/tty'" in text
+    assert 'keybase status' in text
     assert text.index("Checking for Keybase ChatOps") < text.rindex("install_keybase_package")
 
 
