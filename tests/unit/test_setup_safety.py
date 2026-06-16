@@ -49,6 +49,7 @@ def test_keybase_wrapper_sets_login_like_environment():
     assert "export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{kb_uid}/bus" in text
     assert 'export PATH="/usr/local/bin:/usr/bin:/bin"' in text
     assert 'cd \\"$HOME\\" 2>/dev/null || true' in text
+    assert 'source "$HOME/.config/keybase/keybase.autogen.env"' in text
     assert "exec \"$SHELL\" -lc \\'exec /usr/bin/keybase \"$@\"\\' keybase \"$@\"" in text
 
 
