@@ -64,6 +64,10 @@ INSTALL_DIR        = Path("/opt/nft-firewall")
 LOG_DIR            = Path("/var/log/nft-firewall")
 LIB_DIR            = Path("/var/lib/nft-firewall")
 ETC_DIR            = Path("/etc/nft-firewall")
+SYSTEM_HOME        = LIB_DIR
+MEDIA_HOME         = Path("/home/media")
+BACKUP_HOME        = Path("/home/backup")
+DEPLOY_HOME        = Path("/home/deploy")
 MEDIA_CONFIG_DIR   = Path("/srv/config")
 COSMOS_COMPOSE_DIR = MEDIA_CONFIG_DIR / "cosmos"
 SUDOERS_FILE       = Path("/etc/sudoers.d/nft-firewall")
@@ -236,11 +240,25 @@ def _ensure_user(name: str, *, system: bool, home: Optional[Path], shell: str) -
     if _user_exists(name):
         pw = pwd.getpwnam(name)
         _ok(f"User '{name}' already exists (uid={pw.pw_uid}, shell={pw.pw_shell})")
+        if home is not None and pw.pw_dir != str(home):
+            r = _run(["usermod", "--home", str(home), name], check=False)
+            if r.returncode != 0:
+                _warn(f"Could not set home for '{name}' to {home}: {r.stderr.strip()}")
+            else:
+                _ok(f"Set '{name}' home to {home}")
+        if shell and pw.pw_shell != shell:
+            r = _run(["usermod", "--shell", shell, name], check=False)
+            if r.returncode != 0:
+                _warn(f"Could not set shell for '{name}' to {shell}: {r.stderr.strip()}")
+            else:
+                _ok(f"Set '{name}' shell to {shell}")
         return
 
     cmd = ["useradd", "--user-group", "--shell", shell]
     if system:
         cmd += ["--system", "--no-create-home"]
+        if home is not None:
+            cmd += ["--home-dir", str(home)]
     else:
         cmd += ["--create-home"]
         if home is not None:
@@ -593,10 +611,10 @@ def step1_create_system_user() -> None:
     _header("Step 1 — User Model")
 
     _migrate_legacy_system_user()
-    _ensure_user(SYSTEM_USER, system=True, home=None, shell="/bin/false")
-    _ensure_user(MEDIA_USER, system=False, home=Path("/home/media"), shell="/bin/bash")
-    _ensure_user(BACKUP_USER, system=False, home=Path("/home/backup"), shell="/bin/bash")
-    _ensure_user(DEPLOY_USER, system=False, home=Path("/home/deploy"), shell="/bin/bash")
+    _ensure_user(SYSTEM_USER, system=True, home=SYSTEM_HOME, shell="/bin/false")
+    _ensure_user(MEDIA_USER, system=False, home=MEDIA_HOME, shell="/bin/bash")
+    _ensure_user(BACKUP_USER, system=False, home=BACKUP_HOME, shell="/bin/bash")
+    _ensure_user(DEPLOY_USER, system=False, home=DEPLOY_HOME, shell="/bin/bash")
 
     # 'adm' group membership lets fw-admin read /var/log/auth.log (ssh-alert)
     try:
@@ -775,10 +793,12 @@ def step3_scaffold_dirs() -> None:
 
     # Runtime/state: fw-admin-owned (daemons must write here)
     for d in (LIB_DIR, LOG_DIR, ETC_DIR):
+        d.chmod(0o750)
         _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(d)])
         _ok(f"chown -R {SYSTEM_USER}:{SYSTEM_USER}  {d}")
 
     COSMOS_COMPOSE_DIR.mkdir(parents=True, exist_ok=True)
+    COSMOS_COMPOSE_DIR.chmod(0o2770)
     _run(["chown", "-R", f"{MEDIA_USER}:{MEDIA_USER}", str(COSMOS_COMPOSE_DIR)])
     _ok(f"chown -R {MEDIA_USER}:{MEDIA_USER}  {COSMOS_COMPOSE_DIR}")
 

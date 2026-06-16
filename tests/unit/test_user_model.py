@@ -35,7 +35,7 @@ def test_step1_normalizes_required_user_model(monkeypatch):
 
     setup.step1_create_system_user()
 
-    assert ("fw-admin", True, None, "/bin/false") in ensured_users
+    assert ("fw-admin", True, setup.SYSTEM_HOME, "/bin/false") in ensured_users
     assert ("media", False, Path("/home/media"), "/bin/bash") in ensured_users
     assert ("backup", False, Path("/home/backup"), "/bin/bash") in ensured_users
     assert ("deploy", False, Path("/home/deploy"), "/bin/bash") in ensured_users
@@ -70,6 +70,9 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
 
     for path in (install_dir, lib_dir, log_dir, etc_dir, cosmos_compose):
         assert path.exists()
+    for path in (lib_dir, log_dir, etc_dir):
+        assert path.stat().st_mode & 0o777 == 0o750
+    assert cosmos_compose.stat().st_mode & 0o7777 == 0o2770
     # Code dir is root-owned (group fw-admin) so daemons cannot rewrite their own code.
     assert ["chown", "-R", "root:fw-admin", str(install_dir)] in calls
     # Runtime/state dirs stay fw-admin-owned so daemons can write logs and state.
@@ -77,6 +80,29 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
         assert ["chown", "-R", "fw-admin:fw-admin", str(path)] in calls
     assert ["chown", "-R", "media:media", str(cosmos_compose)] in calls
     assert ["chown", "-R", "media:media", str(media_config)] not in calls
+
+
+def test_existing_users_are_normalized_to_expected_home_and_shell(monkeypatch):
+    import setup
+
+    calls = []
+    monkeypatch.setattr(setup, "_user_exists", lambda _name: True)
+    monkeypatch.setattr(
+        setup.pwd,
+        "getpwnam",
+        lambda name: SimpleNamespace(pw_uid=999, pw_dir="/home/fw-admin", pw_shell="/bin/sh"),
+    )
+    monkeypatch.setattr(
+        setup,
+        "_run",
+        lambda cmd, **_kw: calls.append(cmd) or SimpleNamespace(returncode=0, stderr=""),
+    )
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+
+    setup._ensure_user("fw-admin", system=True, home=setup.SYSTEM_HOME, shell="/bin/false")
+
+    assert ["usermod", "--home", str(setup.SYSTEM_HOME), "fw-admin"] in calls
+    assert ["usermod", "--shell", "/bin/false", "fw-admin"] in calls
 
 
 def test_sudoers_uses_fw_admin_and_not_legacy_nft_firewall(monkeypatch, tmp_path):
