@@ -67,6 +67,13 @@ Core install plus optional Cosmos/Keybase integration:
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations
 ```
 
+Core install plus Cosmos/Keybase integration and Docker Engine for Cosmos app
+management:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker
+```
+
 The curl entrypoint prints normally and also writes a root-only install log under
 `/var/log/nft-firewall/install-*.log` for troubleshooting.
 
@@ -75,7 +82,7 @@ command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh \
-  | sudo NFT_FIREWALL_INSTALL_LOG=/root/nft-firewall-install-debug.log NFT_FIREWALL_DEBUG=1 bash -s -- --with-integrations
+  | sudo NFT_FIREWALL_INSTALL_LOG=/root/nft-firewall-install-debug.log NFT_FIREWALL_DEBUG=1 bash -s -- --with-integrations --with-docker
 ```
 
 After the core install, validate before applying firewall rules:
@@ -87,11 +94,13 @@ sudo fw safe-apply cosmos-vpn-secure
 ```
 
 The optional integration path installs Cosmos as a standalone service and keeps
-Cosmos config/storage under `/srv`. It skips Cosmos iptables changes so
+Cosmos config/storage under `/srv`. The `--with-docker` path installs Docker
+Engine from Docker's Debian repository only after writing `/etc/docker/daemon.json`
+with `iptables=false`, `ip6tables=false`, and `data-root=/srv/docker`, so
 nft-firewall remains the firewall authority.
 
-Clean-VM validation covered the installer path without Docker, Keybase, or a
-real WireGuard provider. Cosmos starts without Docker, but container management
+Clean-VM validation covered the installer path without Keybase or a real
+WireGuard provider. Cosmos starts without Docker, but container management
 requires Docker to be installed and reachable by Cosmos.
 
 ## Repository Structure

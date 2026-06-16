@@ -13,17 +13,25 @@ if [[ "${NFT_FIREWALL_DEBUG:-0}" == "1" ]]; then
 fi
 
 RUN_INTEGRATIONS=0
+INSTALL_DOCKER=0
 for arg in "$@"; do
     case "$arg" in
         --with-integrations|--with-cosmos-keybase)
             RUN_INTEGRATIONS=1
             ;;
+        --with-docker)
+            RUN_INTEGRATIONS=1
+            INSTALL_DOCKER=1
+            ;;
         -h|--help)
             cat <<'USAGE'
-Usage: sudo bash setup.sh [--with-integrations]
+Usage: sudo bash setup.sh [--with-integrations] [--with-docker]
 
 Installs the core nft-firewall project. Optional Cosmos/Keybase hardening is
 skipped by default and only runs when --with-integrations is supplied.
+
+  --with-integrations  configure optional Cosmos/Keybase integration
+  --with-docker        also install Docker Engine for Cosmos app management
 USAGE
             exit 0
             ;;
@@ -86,6 +94,7 @@ fi
 
 if [[ "$RUN_INTEGRATIONS" -eq 1 ]]; then
     echo "[+] Applying optional Cosmos/Keybase hardening and integrations..."
+    export NFT_FIREWALL_INSTALL_DOCKER="$INSTALL_DOCKER"
     bash scripts/core-hardening.sh
 else
     echo "[+] Skipping optional Cosmos/Keybase hardening."

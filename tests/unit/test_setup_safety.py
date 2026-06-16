@@ -462,7 +462,11 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     text = setup_sh.read_text()
 
     assert "RUN_INTEGRATIONS=0" in text
+    assert "INSTALL_DOCKER=0" in text
     assert "--with-integrations" in text
+    assert "--with-docker" in text
+    assert 'INSTALL_DOCKER=1' in text
+    assert 'export NFT_FIREWALL_INSTALL_DOCKER="$INSTALL_DOCKER"' in text
     assert "Skipping optional Cosmos/Keybase hardening" in text
     assert 'if [[ "$RUN_INTEGRATIONS" -eq 1 ]]' in text
 
@@ -489,11 +493,26 @@ def test_core_hardening_preserves_nft_firewall_docker_authority():
     script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
     text = script.read_text()
 
+    assert 'write_docker_daemon_json' in text
     assert '"data-root": "/srv/docker"' in text
     assert '"iptables": False' in text
     assert '"ip6tables": False' in text
     assert '"max-size": "100m"' in text
     assert '"max-file": "5"' in text
+    assert text.index('write_docker_daemon_json') < text.index('apt-get install -y docker-ce')
+
+
+def test_core_hardening_can_install_docker_engine_explicitly():
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
+    text = script.read_text()
+
+    assert 'INSTALL_DOCKER="${NFT_FIREWALL_INSTALL_DOCKER:-0}"' in text
+    assert 'install_docker_engine' in text
+    assert 'https://download.docker.com/linux/debian/gpg' in text
+    assert 'https://download.docker.com/linux/debian %s stable' in text
+    assert 'docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin' in text
+    assert 'systemctl enable --now docker' in text
+    assert text.index('install_docker_engine') < text.index('if cosmos_installed')
 
 
 def test_core_hardening_uses_documented_cosmos_standalone_flags():
