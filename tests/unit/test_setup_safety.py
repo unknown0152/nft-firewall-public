@@ -532,12 +532,17 @@ def test_core_hardening_can_install_keybase_explicitly():
     assert "install_keybase_package" in text
     assert "detect_keybase_linux_user" in text
     assert "maybe_run_keybase_login" in text
+    assert "enable_keybase_units_if_ready" in text
+    assert "keybase_config_ready" in text
     assert "https://prerelease.keybase.io/keybase_amd64.deb" in text
     assert 'apt-get install -y "$tmp_dir/keybase_amd64.deb"' in text
     assert "run_keybase -g" in text
     assert "keybase login" in text
     assert "sh -c 'keybase login </dev/tty'" in text
-    assert 'keybase status' in text
+    assert "keybase whoami" in text
+    assert "keybase status" not in text
+    assert "systemctl restart nft-listener.service" in text
+    assert "systemctl restart nft-daily-report.timer" in text
     assert text.index("Checking for Keybase ChatOps") < text.rindex("install_keybase_package")
 
 

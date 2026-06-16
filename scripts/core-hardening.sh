@@ -173,19 +173,30 @@ maybe_run_keybase_login() {
   fi
 
   echo "[+] Keybase Linux user: $kb_user"
-  if sudo -iu "$kb_user" keybase status >/dev/null 2>&1; then
-    whoami_out="$(sudo -iu "$kb_user" keybase whoami 2>/dev/null || true)"
-    echo "[ok] Keybase already logged in${whoami_out:+ as $whoami_out}"
+  whoami_out="$(sudo -iu "$kb_user" keybase whoami 2>/dev/null || true)"
+  if [[ -n "$whoami_out" ]]; then
+    echo "[ok] Keybase already logged in as $whoami_out"
     return
   fi
 
   echo "[+] Starting Keybase headless for $kb_user..."
   sudo -iu "$kb_user" sh -c 'run_keybase -g >/tmp/nft-firewall-keybase-run.log 2>&1' || true
   sleep 2
+  whoami_out="$(sudo -iu "$kb_user" keybase whoami 2>/dev/null || true)"
+  if [[ -n "$whoami_out" ]]; then
+    echo "[ok] Keybase logged in as $whoami_out"
+    return
+  fi
 
   if [[ "$KEYBASE_LOGIN" == "1" && -r /dev/tty ]]; then
     echo "[+] Launching interactive Keybase login for $kb_user..."
     sudo -iu "$kb_user" sh -c 'keybase login </dev/tty'
+    whoami_out="$(sudo -iu "$kb_user" keybase whoami 2>/dev/null || true)"
+    if [[ -n "$whoami_out" ]]; then
+      echo "[ok] Keybase logged in as $whoami_out"
+      return
+    fi
+    echo "[!] Keybase login finished, but keybase whoami is still empty."
     return
   fi
 
@@ -194,6 +205,43 @@ maybe_run_keybase_login() {
   echo "      sudo -iu $kb_user run_keybase -g"
   echo "      sudo -iu $kb_user keybase login"
   echo "    Then re-run setup.py --reconfigure if [keybase] was left blank."
+}
+
+keybase_config_ready() {
+  python3 - <<'PY'
+import configparser
+
+cfg = configparser.ConfigParser()
+cfg.read("/opt/nft-firewall/config/firewall.ini")
+linux_user = cfg.get("keybase", "linux_user", fallback="").strip()
+target_user = cfg.get("keybase", "target_user", fallback="").strip()
+team = cfg.get("keybase", "team", fallback="").strip()
+if linux_user and target_user and (team or target_user):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+enable_keybase_units_if_ready() {
+  if ! command -v keybase >/dev/null 2>&1; then
+    return
+  fi
+  if ! keybase_config_ready; then
+    echo "[!] Keybase config incomplete; nft-listener and daily report timer not enabled."
+    return
+  fi
+
+  kb_user="$(detect_keybase_linux_user || true)"
+  if [[ -z "$kb_user" ]] || [[ -z "$(sudo -iu "$kb_user" keybase whoami 2>/dev/null || true)" ]]; then
+    echo "[!] Keybase is not logged in; nft-listener and daily report timer not enabled."
+    return
+  fi
+
+  echo "[+] Enabling Keybase-backed nft-firewall units..."
+  systemctl daemon-reload
+  systemctl enable nft-listener.service nft-daily-report.timer >/dev/null
+  systemctl restart nft-listener.service || echo "[!] nft-listener restart failed"
+  systemctl restart nft-daily-report.timer || echo "[!] nft-daily-report.timer restart failed"
 }
 
 cosmos_installed() {
@@ -358,6 +406,7 @@ fi
 echo "[+] Checking for Keybase ChatOps..."
 install_keybase_package
 maybe_run_keybase_login
+enable_keybase_units_if_ready
 
 # 8. Verification & Auto-Apply
 echo ""
