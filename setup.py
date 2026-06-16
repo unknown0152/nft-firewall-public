@@ -894,6 +894,7 @@ def _install_keybase_wrapper(kb_user: str) -> None:
             pw      = pwd.getpwnam(kb_user)
             kb_home = pw.pw_dir
             kb_uid  = pw.pw_uid
+            kb_shell = pw.pw_shell or "/bin/sh"
         except KeyError:
             _warn(f"Cannot look up user '{kb_user}' — Keybase wrapper not installed")
             return
@@ -901,13 +902,20 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         # No Keybase user configured; install a stub that exits clearly
         kb_home = "/home/UNCONFIGURED"
         kb_uid  = 1000
+        kb_shell = "/bin/sh"
 
     script = (
         "#!/bin/bash\n"
         "# Wrapper installed by nft-firewall setup.py\n"
         "# Allows fw-admin to run keybase as the Keybase account via a clean sudo rule.\n"
         f"export HOME={kb_home}\n"
+        f"export USER={kb_user or 'UNCONFIGURED'}\n"
+        f"export LOGNAME={kb_user or 'UNCONFIGURED'}\n"
+        f"export SHELL={kb_shell}\n"
         f"export XDG_RUNTIME_DIR=/run/user/{kb_uid}\n"
+        f"export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{kb_uid}/bus\n"
+        'export PATH="/usr/local/bin:/usr/bin:/bin"\n'
+        "cd \"$HOME\" 2>/dev/null || true\n"
         'exec /usr/bin/keybase "$@"\n'
     )
 

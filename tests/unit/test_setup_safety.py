@@ -38,6 +38,19 @@ def test_fw_wrapper_blocks_plain_apply():
     assert "use 'fw safe-apply <profile>'" in text
 
 
+def test_keybase_wrapper_sets_login_like_environment():
+    setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
+    text = setup_py.read_text()
+
+    assert "export USER=" in text
+    assert "export LOGNAME=" in text
+    assert "export SHELL=" in text
+    assert "export XDG_RUNTIME_DIR=/run/user/{kb_uid}" in text
+    assert "export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{kb_uid}/bus" in text
+    assert 'export PATH="/usr/local/bin:/usr/bin:/bin"' in text
+    assert 'cd \\"$HOME\\" 2>/dev/null || true' in text
+
+
 def test_firewall_threatfeed_service_uses_real_cli_command():
     service = (
         Path(__file__).resolve().parent.parent.parent
