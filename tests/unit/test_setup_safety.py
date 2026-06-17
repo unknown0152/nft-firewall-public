@@ -83,6 +83,17 @@ def test_systemctl_wrapper_skips_start_when_wireguard_interface_exists():
     assert 'exit 0' in text
 
 
+def test_core_hardening_repairs_cosmos_bind_mount_permissions():
+    script = Path(__file__).resolve().parent.parent.parent / "scripts" / "core-hardening.sh"
+    text = script.read_text()
+
+    assert "repair_media_stack_permissions" in text
+    assert "setfacl -R" in text
+    assert 'CONTAINER_UIDS="${NFT_FIREWALL_CONTAINER_UIDS:-1000 1001}"' in text
+    assert "/srv/config/seerr" in text
+    assert "ReadOnlyPaths=/srv/docker" in text
+
+
 def test_unit_patching_uses_configured_wireguard_interface(monkeypatch, tmp_path):
     import setup
 

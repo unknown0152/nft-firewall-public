@@ -20,6 +20,8 @@ APP_CONFIG_DIR="/srv/config"
 MEDIA_LIBRARY_DIR="/srv/media"
 BACKUP_DIR="/srv/backups"
 DOCKER_DATA_DIR="/srv/docker"
+CONTAINER_UIDS="${NFT_FIREWALL_CONTAINER_UIDS:-1000 1001}"
+CONTAINER_GIDS="${NFT_FIREWALL_CONTAINER_GIDS:-1000 1001}"
 INSTALL_DOCKER="${NFT_FIREWALL_INSTALL_DOCKER:-0}"
 INSTALL_KEYBASE="${NFT_FIREWALL_INSTALL_KEYBASE:-0}"
 KEYBASE_LOGIN="${NFT_FIREWALL_KEYBASE_LOGIN:-0}"
@@ -38,6 +40,59 @@ ensure_package_command() {
   if ! command -v "$command_name" >/dev/null 2>&1; then
     apt-get update -qq && apt-get install -y "$package_name" >/dev/null
   fi
+}
+
+apply_container_acl() {
+  local path="$1"
+  [[ -d "$path" ]] || return 0
+
+  if ! command -v setfacl >/dev/null 2>&1; then
+    echo "[+] Installing acl for container bind-mount permissions..."
+    apt-get update -qq && apt-get install -y acl >/dev/null
+  fi
+
+  local acl_args=()
+  local uid gid
+  for uid in $CONTAINER_UIDS; do
+    acl_args+=("-m" "u:${uid}:rwx" "-m" "d:u:${uid}:rwx")
+  done
+  for gid in $CONTAINER_GIDS; do
+    acl_args+=("-m" "g:${gid}:rwx" "-m" "d:g:${gid}:rwx")
+  done
+
+  setfacl -R "${acl_args[@]}" "$path"
+}
+
+repair_media_stack_permissions() {
+  echo "[+] Repairing media-stack bind-mount permissions..."
+
+  local app_dirs=(
+    "$APP_CONFIG_DIR/danish-intelligence"
+    "$APP_CONFIG_DIR/prowlarr"
+    "$APP_CONFIG_DIR/radarr"
+    "$APP_CONFIG_DIR/sonarr"
+    "$APP_CONFIG_DIR/radarr-2160p"
+    "$APP_CONFIG_DIR/sonarr-2160p"
+    "$APP_CONFIG_DIR/seerr"
+    "$APP_CONFIG_DIR/altmount"
+    "$APP_CONFIG_DIR/plex"
+    "$APP_CONFIG_DIR/jellyfin"
+  )
+
+  local dir
+  for dir in "${app_dirs[@]}"; do
+    mkdir -p "$dir"
+  done
+
+  chown -R "$MEDIA_USER:$MEDIA_USER" "$APP_CONFIG_DIR" "$MEDIA_LIBRARY_DIR"
+  chmod -R u+rwX,g+rwX "$APP_CONFIG_DIR" "$MEDIA_LIBRARY_DIR"
+  find "$APP_CONFIG_DIR" "$MEDIA_LIBRARY_DIR" -type d -exec chmod 2775 {} +
+
+  apply_container_acl "$APP_CONFIG_DIR"
+  apply_container_acl "$MEDIA_LIBRARY_DIR"
+
+  chown "$MEDIA_USER:$MEDIA_USER" "$BACKUP_DIR"
+  chmod 0750 "$BACKUP_DIR"
 }
 
 write_docker_daemon_json() {
@@ -310,7 +365,12 @@ ensure_dir "$COSMOS_STORAGE_DIR" "$MEDIA_USER:$MEDIA_USER" 0750
 ensure_dir "$APP_CONFIG_DIR" "$MEDIA_USER:$MEDIA_USER" 2775
 ensure_dir "$MEDIA_LIBRARY_DIR" "$MEDIA_USER:$MEDIA_USER" 2775
 ensure_dir "$BACKUP_DIR" "$MEDIA_USER:$MEDIA_USER" 0750
-ensure_dir "$DOCKER_DATA_DIR" root:root 0710
+if getent group docker >/dev/null 2>&1; then
+  ensure_dir "$DOCKER_DATA_DIR" root:docker 0710
+else
+  ensure_dir "$DOCKER_DATA_DIR" root:root 0710
+fi
+repair_media_stack_permissions
 
 if [[ -f "$COSMOS_CONFIG_FILE" ]]; then
   python3 - "$COSMOS_CONFIG_FILE" "$COSMOS_STORAGE_DIR" <<'PY'
@@ -342,11 +402,22 @@ set -e
 mkdir -p /srv/cosmos/config /srv/cosmos-storage /srv/config /srv/media /srv/backups /srv/docker
 chown media:media /srv/cosmos /srv/cosmos/config /srv/cosmos-storage /srv/config /srv/media /srv/backups
 chown media:media /opt/cosmos
-chown root:root /srv/docker
+if getent group docker >/dev/null 2>&1; then
+  chown root:docker /srv/docker
+else
+  chown root:root /srv/docker
+fi
 chmod 750 /srv/cosmos /srv/cosmos/config /srv/cosmos-storage /srv/backups
 chmod 2775 /srv/config /srv/media
 chmod 710 /srv/docker
 chmod 755 /opt/cosmos
+mkdir -p /srv/config/danish-intelligence /srv/config/prowlarr /srv/config/radarr /srv/config/sonarr /srv/config/radarr-2160p /srv/config/sonarr-2160p /srv/config/seerr /srv/config/altmount /srv/config/plex /srv/config/jellyfin
+chown -R media:media /srv/config /srv/media
+chmod -R u+rwX,g+rwX /srv/config /srv/media
+find /srv/config /srv/media -type d -exec chmod 2775 {} +
+if command -v setfacl >/dev/null 2>&1; then
+  setfacl -R -m u:1000:rwx,d:u:1000:rwx,u:1001:rwx,d:u:1001:rwx,g:1000:rwx,d:g:1000:rwx,g:1001:rwx,d:g:1001:rwx /srv/config /srv/media
+fi
 EOF
 chmod +x /usr/local/bin/fix-cosmos-perms
 
@@ -370,6 +441,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/srv/cosmos /srv/cosmos-storage /srv/config /srv/media /srv/backups /opt/cosmos
+ReadOnlyPaths=/srv/docker
 ExecStartPre=+/usr/local/bin/fix-cosmos-perms
 EOF
 
