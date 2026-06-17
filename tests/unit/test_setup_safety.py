@@ -376,6 +376,7 @@ def test_blank_keybase_prompts_do_not_write_partial_keybase_section(monkeypatch,
     ini = tmp_path / "firewall.ini"
     monkeypatch.setattr(setup, "_CONF_DIR", tmp_path)
     monkeypatch.setattr(setup, "_CONF_FILE", ini)
+    monkeypatch.setattr(setup, "INSTALL_DIR", tmp_path / "missing-install")
     monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
     monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
     monkeypatch.setattr(setup, "_detect_phy_if", lambda: "ens3")
@@ -393,6 +394,68 @@ def test_blank_keybase_prompts_do_not_write_partial_keybase_section(monkeypatch,
     cfg.read(ini)
     assert cfg.has_section("network")
     assert not cfg.has_section("keybase")
+
+
+def test_reconfigure_defaults_preserve_installed_config_from_temp_checkout(monkeypatch, tmp_path):
+    import configparser
+    import setup
+
+    checkout_config = tmp_path / "checkout" / "config"
+    checkout_config.mkdir(parents=True)
+    installed_config = tmp_path / "opt" / "nft-firewall" / "config"
+    installed_config.mkdir(parents=True)
+    installed_ini = installed_config / "firewall.ini"
+    installed_ini.write_text(
+        "[network]\n"
+        "phy_if = enp88s0\n"
+        "vpn_interface = wg0\n"
+        "lan_net = 192.168.50.0/24\n"
+        "vpn_server_ip = 185.236.203.98\n"
+        "vpn_server_port = 9930\n"
+        "ssh_port = 58473\n"
+        "lan_full_access = false\n"
+        "lan_allow_ports = 58473, 80, 443, 32400, 8096\n"
+        "lan_allow_udp_ports = 7359\n"
+        "extra_ports = 80, 443\n"
+        "torrent_port = 64279\n"
+        "\n"
+        "[keybase]\n"
+        "linux_user = nuc\n"
+        "team = nuc_alerts\n"
+        "channel = general\n"
+        "target_user = blackflagdata\n"
+        "\n"
+        "[install]\n"
+        "profile = cosmos-vpn-secure\n"
+    )
+    target_ini = checkout_config / "firewall.ini"
+
+    monkeypatch.setattr(setup, "_CONF_DIR", checkout_config)
+    monkeypatch.setattr(setup, "_CONF_FILE", target_ini)
+    monkeypatch.setattr(setup, "INSTALL_DIR", tmp_path / "opt" / "nft-firewall")
+    monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_detect_phy_if", lambda: "wrong0")
+    monkeypatch.setattr(setup, "_detect_vpn_if", lambda: "wrongwg")
+    monkeypatch.setattr(setup, "_detect_lan_net", lambda _phy_if: "10.0.2.0/24")
+    monkeypatch.setattr(setup, "_detect_vpn_endpoint", lambda _vpn_if: ("203.0.113.1", "51820"))
+    monkeypatch.setattr(setup, "_detect_ssh_port", lambda: "22")
+    monkeypatch.setattr(setup, "_detect_keybase_linux_user", lambda: "")
+    monkeypatch.setattr(setup, "_ask", lambda _label, default="", hint="": default)
+    monkeypatch.setattr(setup, "_ask_ports", lambda _label, default="": default)
+
+    setup.step0_configure()
+
+    cfg = configparser.ConfigParser()
+    cfg.read(target_ini)
+    assert cfg.get("network", "phy_if") == "enp88s0"
+    assert cfg.get("network", "ssh_port") == "58473"
+    assert cfg.get("network", "lan_allow_ports") == "58473, 80, 443, 32400, 8096"
+    assert cfg.get("network", "lan_allow_udp_ports") == "7359"
+    assert cfg.get("network", "extra_ports") == "80, 443"
+    assert cfg.get("network", "torrent_port") == "64279"
+    assert cfg.get("keybase", "team") == "nuc_alerts"
+    assert cfg.get("keybase", "target_user") == "blackflagdata"
 
 
 def test_install_dir_is_root_owned_not_fw_admin(monkeypatch):

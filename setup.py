@@ -457,46 +457,54 @@ def step0_configure(reconfigure: bool = False) -> None:
     print("  Detected values are shown in \033[90m[brackets]\033[0m. "
           "Press Enter to accept, or type to override.\n")
 
+    existing_cfg = configparser.ConfigParser()
+    default_source = _CONF_FILE if _CONF_FILE.exists() else INSTALL_DIR / "config" / "firewall.ini"
+    if default_source.exists():
+        try:
+            existing_cfg.read(str(default_source))
+        except Exception:
+            existing_cfg = configparser.ConfigParser()
+
+    def _existing(section: str, option: str, default: str = "") -> str:
+        return existing_cfg.get(section, option, fallback=default).strip()
+
     # ── Network ───────────────────────────────────────────────────────────────
     print("  \033[1mNetwork\033[0m")
 
     phy_if = _ask("Physical (WAN) interface",
-                  default=_detect_phy_if(),
+                  default=_existing("network", "phy_if") or _detect_phy_if(),
                   hint="run `ip link show` to list interfaces")
 
-    vpn_if = _ask("WireGuard interface", default=_detect_vpn_if())
+    vpn_if = _ask("WireGuard interface",
+                  default=_existing("network", "vpn_interface") or _detect_vpn_if())
 
     lan_net = _ask("LAN subnet (CIDR)",
-                   default=_detect_lan_net(phy_if),
+                   default=_existing("network", "lan_net") or _detect_lan_net(phy_if),
                    hint="e.g. 192.168.1.0/24")
 
     detected_ip, detected_port = _detect_vpn_endpoint(vpn_if)
-    vpn_ip   = _ask("VPN server IP / hostname", default=detected_ip)
-    vpn_port = _ask("VPN server UDP port",      default=detected_port or "51820")
+    vpn_ip   = _ask("VPN server IP / hostname",
+                    default=_existing("network", "vpn_server_ip") or detected_ip)
+    vpn_port = _ask("VPN server UDP port",
+                    default=_existing("network", "vpn_server_port") or detected_port or "51820")
 
-    ssh_port = _ask("SSH daemon port", default=_detect_ssh_port())
-
-    _existing_lan_full_access = ""
-    _existing_lan_allow_ports = ""
-    if _CONF_FILE.exists():
-        try:
-            _lc = configparser.ConfigParser()
-            _lc.read(str(_CONF_FILE))
-            _existing_lan_full_access = _lc.get("network", "lan_full_access", fallback="")
-            _existing_lan_allow_ports = _lc.get("network", "lan_allow_ports", fallback="")
-        except Exception:
-            pass
+    ssh_port = _ask("SSH daemon port",
+                    default=_existing("network", "ssh_port") or _detect_ssh_port())
 
     lan_full_access = _ask(
         "LAN full access (true/false)",
-        default=_existing_lan_full_access or "false",
+        default=_existing("network", "lan_full_access") or "false",
     ).lower()
     if lan_full_access not in {"true", "false", "yes", "no", "1", "0"}:
         _warn("LAN full access must be true/false — using false")
         lan_full_access = "false"
     lan_allow_ports = _ask_ports(
         "LAN allowed TCP ports when strict",
-        default=_existing_lan_allow_ports or f"{ssh_port}, 32400",
+        default=_existing("network", "lan_allow_ports") or f"{ssh_port}, 32400",
+    )
+    lan_allow_udp_ports = _ask_ports(
+        "LAN allowed UDP ports when strict",
+        default=_existing("network", "lan_allow_udp_ports"),
     )
 
     # ── Open ports ────────────────────────────────────────────────────────────
@@ -504,22 +512,10 @@ def step0_configure(reconfigure: bool = False) -> None:
     print("  \033[1mOpen ports on the VPN interface\033[0m")
     print("  (These are the ports reachable when connected to the VPN.)")
 
-    # Read existing extra_ports / torrent_port as defaults when reconfiguring
-    _existing_extra   = ""
-    _existing_torrent = ""
-    if _CONF_FILE.exists():
-        try:
-            _ec = configparser.ConfigParser()
-            _ec.read(str(_CONF_FILE))
-            _existing_extra   = _ec.get("network", "extra_ports",  fallback="")
-            _existing_torrent = _ec.get("network", "torrent_port", fallback="")
-        except Exception:
-            pass
-
     extra_ports   = _ask_ports("Extra TCP ports (e.g. 8080, 443)",
-                               default=_existing_extra)
+                               default=_existing("network", "extra_ports"))
     torrent_port  = _ask_ports("BitTorrent port (TCP + UDP)",
-                               default=_existing_torrent)
+                               default=_existing("network", "torrent_port"))
     # Validate torrent_port is a single port
     if torrent_port and "," in torrent_port:
         _warn("BitTorrent port must be a single port — using first value")
@@ -531,24 +527,16 @@ def step0_configure(reconfigure: bool = False) -> None:
     print("  (Leave blank to disable — you can add it to firewall.ini later.)")
 
     kb_linux_user  = _ask("Linux user running Keybase",
-                          default=_detect_keybase_linux_user())
-    kb_team        = _ask("Keybase team name",    default="")
-    kb_channel     = _ask("Team channel",         default="general")
-    kb_target_user = _ask("Your Keybase username  (REQUIRED — authorizes !commands)", default="")
+                          default=_existing("keybase", "linux_user") or _detect_keybase_linux_user())
+    kb_team        = _ask("Keybase team name",    default=_existing("keybase", "team"))
+    kb_channel     = _ask("Team channel",         default=_existing("keybase", "channel") or "general")
+    kb_target_user = _ask("Your Keybase username  (REQUIRED — authorizes !commands)", default=_existing("keybase", "target_user"))
 
     # ── Firewall profile ──────────────────────────────────────────────────────
     print()
     print("  \033[1mFirewall profile\033[0m")
-    _existing_profile = ""
-    if _CONF_FILE.exists():
-        try:
-            _pc = configparser.ConfigParser()
-            _pc.read(str(_CONF_FILE))
-            _existing_profile = _pc.get("install", "profile", fallback="")
-        except Exception:
-            pass
     firewall_profile = _ask("Firewall profile",
-                            default=_existing_profile or "cosmos-vpn-secure",
+                            default=_existing("install", "profile") or "cosmos-vpn-secure",
                             hint="cosmos-vpn-secure")
 
     # ── Write ─────────────────────────────────────────────────────────────────
@@ -565,6 +553,8 @@ def step0_configure(reconfigure: bool = False) -> None:
     }
     if lan_allow_ports:
         network_section["lan_allow_ports"] = lan_allow_ports
+    if lan_allow_udp_ports:
+        network_section["lan_allow_udp_ports"] = lan_allow_udp_ports
     if extra_ports:
         network_section["extra_ports"] = extra_ports
     if torrent_port:
