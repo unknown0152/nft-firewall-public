@@ -1553,6 +1553,14 @@ def _cmd_ssh_alert(args: argparse.Namespace) -> None:
         _die(f"Unknown ssh-alert subcommand: {args.ssh_alert_cmd!r}")
 
 
+def _cmd_webui(args: argparse.Namespace) -> None:
+    if args.webui_cmd == "daemon":
+        from daemons.webui import run
+        run()
+    else:
+        _die(f"Unknown webui subcommand: {args.webui_cmd!r}")
+
+
 def _cmd_watchdog(args: argparse.Namespace) -> None:
     from daemons.watchdog import NftWatchdog
     cfg_path = _config_path_for_daemon()
@@ -2028,6 +2036,12 @@ Quick-start workflow:
     sa_sub.required = True
     sa_sub.add_parser("daemon", help="Run the SSH alert daemon loop (systemd ExecStart)")
 
+    # ── Web UI ────────────────────────────────────────────────────────────────
+    wu     = sub.add_parser("webui", help="Read-only local web dashboard")
+    wu_sub = wu.add_subparsers(dest="webui_cmd", metavar="<subcommand>")
+    wu_sub.required = True
+    wu_sub.add_parser("daemon", help="Run the local web dashboard (systemd ExecStart)")
+
     # ── Knockd ────────────────────────────────────────────────────────────────
     kp     = sub.add_parser("knockd", help="Port-knock daemon for stealth SSH access")
     kp_sub = kp.add_subparsers(dest="knockd_cmd", metavar="<subcommand>")
@@ -2093,6 +2107,7 @@ _HANDLERS = {
     "watchdog"        : _cmd_watchdog,
     "listener"        : _cmd_listener,
     "ssh-alert"       : _cmd_ssh_alert,
+    "webui"           : _cmd_webui,
     "knockd"          : _cmd_knockd,
     "status"          : _cmd_status,
     "firewall-report" : _cmd_firewall_report,

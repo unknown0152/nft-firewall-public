@@ -1,0 +1,20 @@
+[Unit]
+Description=NFT Firewall Web UI — read-only local dashboard
+After=network-online.target nft-watchdog.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fw-admin
+WorkingDirectory=/opt/nft-firewall
+Environment=NFT_FIREWALL_WEBUI_HOST=127.0.0.1
+Environment=NFT_FIREWALL_WEBUI_PORT=8787
+ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py webui daemon
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nft-webui
+
+[Install]
+WantedBy=multi-user.target

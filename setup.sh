@@ -16,6 +16,7 @@ RUN_INTEGRATIONS=0
 INSTALL_DOCKER=0
 INSTALL_KEYBASE=0
 KEYBASE_LOGIN=0
+ENABLE_WEBUI=0
 for arg in "$@"; do
     case "$arg" in
         --with-integrations|--with-cosmos-keybase)
@@ -34,9 +35,12 @@ for arg in "$@"; do
             INSTALL_KEYBASE=1
             KEYBASE_LOGIN=1
             ;;
+        --with-webui)
+            ENABLE_WEBUI=1
+            ;;
         -h|--help)
             cat <<'USAGE'
-Usage: sudo bash setup.sh [--with-integrations] [--with-docker] [--with-keybase] [--with-keybase-login]
+Usage: sudo bash setup.sh [--with-integrations] [--with-docker] [--with-keybase] [--with-keybase-login] [--with-webui]
 
 Installs the core nft-firewall project. Optional Cosmos/Keybase hardening is
 skipped by default and only runs when --with-integrations is supplied.
@@ -45,6 +49,7 @@ skipped by default and only runs when --with-integrations is supplied.
   --with-docker        also install Docker Engine for Cosmos app management
   --with-keybase       also install the Keybase Linux package
   --with-keybase-login install Keybase and launch interactive login as the Keybase Linux user
+  --with-webui         enable local read-only dashboard on 127.0.0.1:8787
 USAGE
             exit 0
             ;;
@@ -114,6 +119,14 @@ if [[ "$RUN_INTEGRATIONS" -eq 1 ]]; then
 else
     echo "[+] Skipping optional Cosmos/Keybase hardening."
     echo "    Re-run with --with-integrations when Docker/Cosmos/Keybase setup is intended."
+fi
+
+if [[ "$ENABLE_WEBUI" -eq 1 ]]; then
+    echo "[+] Enabling read-only local web dashboard..."
+    systemctl daemon-reload
+    systemctl enable --now nft-webui.service
+    echo "    Local URL: http://127.0.0.1:8787"
+    echo "    Put Cosmos Cloud in front of this local URL and require Cosmos login."
 fi
 
 echo ""

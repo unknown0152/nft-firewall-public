@@ -80,6 +80,13 @@ To install Keybase and launch its interactive login prompt during setup, use:
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker --with-keybase-login
 ```
 
+To also enable the read-only local web dashboard for use behind Cosmos
+authentication, add `--with-webui`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker --with-keybase-login --with-webui
+```
+
 The curl entrypoint prints normally and also writes a root-only install log under
 `/var/log/nft-firewall/install-*.log` for troubleshooting.
 
@@ -115,6 +122,16 @@ initial firewall config was created with blank Keybase fields.
 Clean-VM validation covered the installer path without Keybase or a real
 WireGuard provider. Cosmos starts without Docker, but container management
 requires Docker to be installed and reachable by Cosmos.
+
+## Read-Only Web Dashboard
+
+The optional `nft-webui.service` listens only on `127.0.0.1:8787` and exposes a
+read-only dashboard plus `/api/status`. It does not provide firewall mutation
+buttons or write endpoints.
+
+Use Cosmos Cloud as the public access layer: create a Cosmos route/proxy to
+`http://127.0.0.1:8787` and require Cosmos login/authentication on that route.
+Do not expose `nft-webui.service` directly to the public network.
 
 ## Repository Structure
 
