@@ -126,8 +126,10 @@ requires Docker to be installed and reachable by Cosmos.
 ## Read-Only Web Dashboard
 
 The optional `nft-webui.service` listens only on `127.0.0.1:8787` and exposes a
-read-only dashboard plus `/api/status`. It does not provide firewall mutation
-buttons or write endpoints.
+read-only live dashboard plus `/api/status` and `/api/dashboard`. The dashboard
+polls local health, CPU, memory, disk, network throughput, service states, and
+configured open ports. It does not provide firewall mutation buttons or write
+endpoints.
 
 Use Cosmos Cloud as the public access layer: create a Cosmos route/proxy to
 `http://127.0.0.1:8787` and require Cosmos login/authentication on that route.
