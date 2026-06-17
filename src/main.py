@@ -401,6 +401,16 @@ def _read_port_list(cfg: configparser.ConfigParser, key: str) -> list[int]:
     return sorted(ports)
 
 
+def _read_single_port(cfg: configparser.ConfigParser, key: str) -> int | None:
+    """Read and validate one optional [network] port value from config."""
+    from utils.validation import validate_port
+
+    raw = cfg.get("network", key, fallback="").strip()
+    if not raw:
+        return None
+    return validate_port(raw, f"network.{key}")
+
+
 def _write_config_atomic(path: Path, cfg: configparser.ConfigParser) -> None:
     """Write INI config atomically while preserving the existing file mode."""
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o640
@@ -509,6 +519,27 @@ def _change_config_port(
         _write_config_atomic(path, cfg)
 
     return changed, sorted(ports)
+
+
+def _clear_config_single_port(path: Path, key: str) -> tuple[bool, int | None]:
+    """Remove one single-value [network] port option."""
+    valid_keys = {"torrent_port"}
+    if key not in valid_keys:
+        raise ValueError(f"unsupported single port: {key}")
+
+    cfg = configparser.ConfigParser()
+    if path.exists():
+        cfg.read(str(path))
+    if not cfg.has_section("network"):
+        return False, None
+
+    old_port = _read_single_port(cfg, key)
+    if old_port is None:
+        return False, None
+
+    cfg.remove_option("network", key)
+    _write_config_atomic(path, cfg)
+    return True, old_port
 
 
 def _format_port_list(ports: list[int]) -> str:
@@ -1733,6 +1764,7 @@ def _menu_port_manager() -> None:
             vpn_tcp = _read_port_list(cfg, "extra_ports")
             lan_tcp = _read_port_list(cfg, "lan_allow_ports")
             lan_udp = _read_port_list(cfg, "lan_allow_udp_ports")
+            torrent_port = _read_single_port(cfg, "torrent_port")
         except ValueError as exc:
             print("\033[2J\033[H", end="")
             print("  \033[1m🔌 Port Manager\033[0m\n")
@@ -1755,6 +1787,8 @@ def _menu_port_manager() -> None:
         print("  LAN UDP ports:")
         for line in _format_port_lines(cfg, "lan_allow_udp_ports"):
             print(f"    \033[36m{line}\033[0m")
+        print("  BitTorrent VPN TCP+UDP:")
+        print(f"    \033[36m`{torrent_port}` — Torrent\033[0m" if torrent_port else "    \033[90mnone\033[0m")
         print("  \033[90m──────────────────────────────────────────────────\033[0m")
         print()
         print("  \033[34m1.\033[0m  Open VPN TCP port")
@@ -1763,14 +1797,41 @@ def _menu_port_manager() -> None:
         print("  \033[34m4.\033[0m  Close LAN TCP port")
         print("  \033[34m5.\033[0m  Open LAN UDP port")
         print("  \033[34m6.\033[0m  Close LAN UDP port")
+        if torrent_port:
+            print("  \033[34m7.\033[0m  Close BitTorrent VPN TCP+UDP port")
         print()
         print("  \033[90mVPN TCP means reachable through wg0; LAN means restricted to your LAN CIDR.\033[0m")
         print("  \033[34m0.\033[0m  Back")
         print()
 
-        choice = _prompt_tty("  Select an option [0-6]: ")
+        choice = _prompt_tty("  Select an option [0-7]: ")
         if choice in {"0", "q", "exit"}:
             return
+        if choice == "7" and torrent_port:
+            changed, closed_port = _clear_config_single_port(cfg_path, "torrent_port")
+            if changed and closed_port:
+                print(f"\n  \033[32m✓\033[0m Removed torrent_port: {closed_port}")
+            else:
+                print("\n  \033[90mNo change; torrent_port was already absent.\033[0m")
+
+            apply_now = _prompt_tty(
+                f"\n  Run safe-apply for profile '{profile}' now? Type 'yes' to continue [no]: "
+            )
+            if apply_now.lower() == "yes":
+                print("\n  \033[33mSafe apply will roll back live rules unless you type CONFIRM.\033[0m")
+                applied = _cmd_safe_apply(argparse.Namespace(profile=profile))
+                if changed and applied and closed_port:
+                    _notify_port_change(
+                        port=closed_port,
+                        label="VPN TCP+UDP",
+                        open_port=False,
+                        profile=profile,
+                        cfg_path=cfg_path,
+                        key="torrent_port",
+                        description="Torrent",
+                    )
+                _wait_for_any_key()
+            continue
         if choice not in options:
             continue
 

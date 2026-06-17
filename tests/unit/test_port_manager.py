@@ -132,6 +132,35 @@ lan_allow_udp_ports = 7359
     assert ports == [7359]
 
 
+def test_clear_config_single_port_removes_torrent_port(tmp_path):
+    config = tmp_path / "firewall.ini"
+    _write_config(
+        config,
+        """
+[network]
+extra_ports = 80, 443
+torrent_port = 64279
+""",
+    )
+
+    changed, port = main._clear_config_single_port(config, "torrent_port")
+
+    cfg = _read_config(config)
+    assert changed is True
+    assert port == 64279
+    assert not cfg.has_option("network", "torrent_port")
+
+
+def test_clear_config_single_port_reports_absent_torrent_port(tmp_path):
+    config = tmp_path / "firewall.ini"
+    _write_config(config, "[network]\nextra_ports = 80\n")
+
+    changed, port = main._clear_config_single_port(config, "torrent_port")
+
+    assert changed is False
+    assert port is None
+
+
 def test_change_config_port_rejects_invalid_port(tmp_path):
     config = tmp_path / "firewall.ini"
     _write_config(config, "[network]\nextra_ports = 80\n")

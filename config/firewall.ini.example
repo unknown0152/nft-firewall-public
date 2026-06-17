@@ -53,7 +53,7 @@ extra_ports     = REDACTED_SECRET
 
 # Optional: single BitTorrent port — opens both TCP and UDP on the VPN interface.
 # Leave empty or omit if you do not run a torrent client.
-torrent_port    = REDACTED_SECRET
+torrent_port    =
 
 # -----------------------------------------------------------------------------
 # [safety] — ranges that must never enter blocked_ips
