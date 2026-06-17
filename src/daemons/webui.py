@@ -10,6 +10,7 @@ import configparser
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -282,6 +283,10 @@ def _metric(label: str, value: Any, tone: str = "") -> str:
     )
 
 
+def _hide_ips(text: Any) -> str:
+    return re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "hidden", str(text))
+
+
 def _report_sections(report: str) -> list[tuple[str, list[str]]]:
     sections: list[tuple[str, list[str]]] = []
     title = "Report"
@@ -307,25 +312,14 @@ def _report_sections(report: str) -> list[tuple[str, list[str]]]:
 def render_dashboard(data: dict[str, Any]) -> str:
     """Render a complete live dark-mode dashboard page."""
     health = data.get("health", {})
-    report = str(data.get("report", ""))
     status = str(health.get("status", "UNKNOWN"))
-    reason = str(health.get("reason", "No reason reported"))
+    reason = _hide_ips(health.get("reason", "No reason reported"))
     status_class = _status_class(status)
 
     handshake = health.get("handshake_age_s", "n/a")
-    vpn_ip = health.get("vpn_ip", "n/a")
     markers = health.get("markers", "n/a")
     nft_integrity = "intact" if health.get("nft_integrity") else "check"
     persisted = health.get("persisted_ruleset_integrity", "unknown")
-
-    section_html = []
-    for title, lines in _report_sections(report):
-        rows = "\n".join(f"<li>{html.escape(line)}</li>" for line in lines)
-        section_html.append(
-            f'<section class="panel report-panel"><h2>{html.escape(title)}</h2><ul>{rows}</ul></section>'
-        )
-
-    body = "\n".join(section_html)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -335,108 +329,214 @@ def render_dashboard(data: dict[str, Any]) -> str:
   <style>
     :root {{
       color-scheme: dark;
-      --bg: #080b10;
-      --surface: #111820;
-      --surface-2: #0e141b;
-      --surface-3: #17212b;
-      --text: #f3f7fb;
-      --muted: #9aaabc;
-      --soft: #c8d3df;
-      --line: #253241;
-      --green: #30d158;
-      --yellow: #ffd60a;
-      --red: #ff453a;
-      --blue: #0a84ff;
-      --cyan: #64d2ff;
+      --bg: #09090b;
+      --surface: rgba(24, 24, 27, 0.6);
+      --surface-border: rgba(255, 255, 255, 0.08);
+      --surface-hover: rgba(39, 39, 42, 0.8);
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --green: #22c55e;
+      --green-glow: rgba(34, 197, 94, 0.2);
+      --yellow: #eab308;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --cyan: #06b6d4;
+      --gradient: linear-gradient(135deg, var(--blue), var(--cyan));
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       min-height: 100vh;
       background:
-        radial-gradient(circle at top left, rgba(10,132,255,.18), transparent 360px),
-        linear-gradient(180deg, #0b1017 0, var(--bg) 430px);
+        radial-gradient(circle at top left, rgba(59, 130, 246, 0.15), transparent 400px),
+        radial-gradient(circle at bottom right, rgba(6, 182, 212, 0.1), transparent 400px),
+        var(--bg);
       color: var(--text);
-      font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.2px;
+    }}
+    main {{ width: min(1280px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 48px; }}
+    header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 24px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--surface-border);
+      margin-bottom: 24px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: clamp(32px, 5vw, 48px);
+      font-weight: 800;
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
       letter-spacing: 0;
     }}
-    main {{ width: min(1280px, calc(100% - 28px)); margin: 0 auto; padding: 24px 0 36px; }}
-    header {{
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 18px;
-      align-items: end;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--line);
+    .subtitle {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
     }}
-    h1 {{ margin: 0; font-size: clamp(30px, 5vw, 58px); font-weight: 780; }}
-    .subtitle {{ margin-top: 6px; color: var(--muted); max-width: 820px; }}
     .status-card {{
-      min-width: 210px;
-      padding: 16px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: rgba(17,24,32,.88);
+      padding: 16px 24px;
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      text-align: right;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.2);
     }}
-    .eyebrow {{ display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; }}
+    .eyebrow {{
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }}
     .status-card strong {{ display: block; margin-top: 4px; font-size: 24px; }}
-    .ok strong, .ok .value {{ color: var(--green); }}
+    .ok strong, .ok .value {{ color: var(--green); text-shadow: 0 0 12px var(--green-glow); }}
     .warn strong, .warn .value {{ color: var(--yellow); }}
     .bad strong, .bad .value {{ color: var(--red); }}
     .metrics {{
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-      margin: 16px 0;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
     }}
     .metric {{
-      min-height: 88px;
-      padding: 14px;
-      border-radius: 8px;
+      padding: 16px;
+      border-radius: 12px;
       background: var(--surface);
-      border: 1px solid var(--line);
+      border: 1px solid var(--surface-border);
+      backdrop-filter: blur(8px);
+      transition: transform 0.2s ease, border-color 0.2s ease;
     }}
-    .metric span {{ display: block; color: var(--muted); font-size: 12px; }}
-    .metric strong {{ display: block; margin-top: 8px; font-size: 18px; overflow-wrap: anywhere; }}
+    .metric:hover {{
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.2);
+    }}
+    .metric span {{ display: block; color: var(--muted); font-size: 12px; font-weight: 500; }}
+    .metric strong {{ display: block; margin-top: 6px; font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }}
+    .metric.ok strong {{ color: var(--green); }}
+    .metric.warn strong {{ color: var(--yellow); }}
     .layout {{
       display: grid;
-      grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr);
-      gap: 12px;
+      grid-template-columns: 1fr 400px;
+      gap: 24px;
     }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }}
-    .side {{ display: grid; gap: 12px; align-content: start; }}
     .panel {{
-      padding: 16px;
-      border-radius: 8px;
-      background: rgba(14,20,27,.94);
-      border: 1px solid var(--line);
+      padding: 24px;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      backdrop-filter: blur(12px);
+      margin-bottom: 24px;
     }}
-    .panel h2 {{ margin: 0 0 12px; font-size: 16px; }}
-    .bars {{ display: grid; gap: 12px; }}
-    .bar-row {{ display: grid; gap: 6px; }}
-    .bar-head {{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--soft); }}
-    .track {{ height: 10px; background: #202b38; border-radius: 99px; overflow: hidden; }}
-    .fill {{ height: 100%; width: 0%; background: linear-gradient(90deg, var(--blue), var(--cyan)); transition: width .35s ease; }}
-    table {{ width: 100%; border-collapse: collapse; }}
-    th, td {{ padding: 8px 0; border-top: 1px solid rgba(255,255,255,.07); text-align: left; color: var(--soft); }}
-    th {{ color: var(--muted); font-size: 12px; font-weight: 650; }}
+    .panel h2 {{
+      margin: 0 0 16px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+    }}
+    .report-header {{
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--surface-border);
+      margin-bottom: 16px;
+    }}
+    .report-header h3 {{ margin: 0 0 4px; font-size: 18px; color: var(--text); }}
+    .report-header p {{ margin: 0; color: var(--muted); font-size: 13px; }}
+    .report-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 24px;
+    }}
+    .report-section.wide {{ grid-column: 1 / -1; }}
+    .report-section h4 {{
+      margin: 0 0 12px;
+      font-size: 14px;
+      color: var(--cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }}
+    .report-list {{ list-style: none; padding: 0; margin: 0; }}
+    .report-list li {{
+      padding: 6px 0;
+      color: var(--text);
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px dashed rgba(255,255,255,0.05);
+    }}
+    .port-list {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0 24px;
+    }}
+    .status-indicator {{ display: inline-flex; align-items: center; gap: 6px; }}
+    .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; }}
+    .dot.green {{ background: var(--green); box-shadow: 0 0 8px var(--green-glow); }}
+    .dot.red {{ background: var(--red); box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }}
+    .dot.yellow {{ background: var(--yellow); box-shadow: 0 0 8px rgba(234, 179, 8, 0.35); }}
+    .side {{ display: grid; gap: 0; align-content: start; }}
+    .bars {{ display: grid; gap: 16px; }}
+    .bar-row {{ display: grid; gap: 8px; }}
+    .bar-head {{ display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); gap: 12px; }}
+    .bar-head strong {{ color: var(--text); font-weight: 500; }}
+    .track {{
+      height: 8px;
+      background: rgba(0,0,0,0.4);
+      border-radius: 99px;
+      overflow: hidden;
+      border: 1px solid var(--surface-border);
+    }}
+    .fill {{
+      height: 100%;
+      background: var(--gradient);
+      border-radius: 99px;
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
+    }}
+    table {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
+    th, td {{
+      padding: 10px 4px;
+      border-bottom: 1px solid var(--surface-border);
+      text-align: left;
+      font-size: 13px;
+    }}
+    th {{
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }}
     td:last-child, th:last-child {{ text-align: right; }}
+    tbody tr:last-child td {{ border-bottom: none; }}
+    tbody tr:hover td {{ background: rgba(255,255,255,0.02); }}
     .pill {{ display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--surface-3); color: var(--soft); }}
-    .pill.ok {{ color: var(--green); }}
-    .pill.warn {{ color: var(--yellow); }}
-    .pill.bad {{ color: var(--red); }}
-    ul {{ list-style: none; margin: 0; padding: 0; }}
-    li {{ padding: 7px 0; border-top: 1px solid rgba(255,255,255,.06); color: var(--muted); }}
-    li:first-child {{ border-top: 0; }}
-    footer {{ margin-top: 16px; color: var(--muted); font-size: 12px; }}
-    code {{ color: var(--cyan); }}
+    .pill.ok {{ background: rgba(34,197,94,0.1); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }}
+    .pill.warn {{ background: rgba(234,179,8,0.1); color: var(--yellow); border: 1px solid rgba(234,179,8,0.2); }}
+    .pill.bad {{ background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }}
+    code {{
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      background: rgba(0,0,0,0.3);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--cyan);
+      font-size: 12px;
+    }}
+    footer {{ margin-top: 24px; text-align: center; color: var(--muted); font-size: 12px; }}
     @media (max-width: 1000px) {{
-      header, .layout, .grid, .metrics {{ grid-template-columns: 1fr; }}
-      .status-card {{ min-width: 0; }}
+      .layout {{ grid-template-columns: 1fr; }}
+      header {{ flex-direction: column; align-items: flex-start; }}
+      .status-card {{ width: 100%; text-align: left; }}
     }}
   </style>
 </head>
@@ -453,14 +553,45 @@ def render_dashboard(data: dict[str, Any]) -> str:
       </div>
     </header>
     <section class="metrics">
-      {_metric("VPN IP", vpn_ip)}
-      {_metric("Handshake", f"{handshake}s" if isinstance(handshake, int) else handshake)}
-      {_metric("Markers", markers, "ok" if markers == "ok" else "warn")}
-      {_metric("NFT Rules", nft_integrity, "ok" if nft_integrity == "intact" else "warn")}
-      {_metric("Persisted Rules", persisted, "ok" if persisted == "ok" else "warn")}
+      <section class="metric"><span>VPN IP</span><strong id="vpnIp">hidden</strong></section>
+      <section class="metric"><span>Handshake</span><strong id="handshake">{html.escape(f"{handshake}s" if isinstance(handshake, int) else str(handshake))}</strong></section>
+      <section class="metric {html.escape('ok' if markers == 'ok' else 'warn')}"><span>Markers</span><strong id="markers">{html.escape(str(markers))}</strong></section>
+      <section class="metric {html.escape('ok' if nft_integrity == 'intact' else 'warn')}"><span>NFT Rules</span><strong id="nftRules">{html.escape(nft_integrity)}</strong></section>
+      <section class="metric {html.escape('ok' if persisted == 'ok' else 'warn')}"><span>Persisted Rules</span><strong id="persistedRules">{html.escape(str(persisted))}</strong></section>
     </section>
     <section class="layout">
-      <div class="grid">{body}</div>
+      <div class="main-content">
+        <section class="panel">
+          <div class="report-header">
+            <h3 id="briefTitle">Good Morning — Firewall Brief</h3>
+            <p><span id="briefDate">loading</span> • <span id="briefStatus" class="value">{html.escape(status)}</span></p>
+          </div>
+          <div class="report-grid">
+            <div class="report-section">
+              <h4>Network & Security</h4>
+              <ul class="report-list">
+                <li><span>VPN</span> <span class="status-indicator"><i id="vpnDot" class="dot green"></i> <span id="vpnState">hidden</span></span></li>
+                <li><span>Handshake</span> <span class="status-indicator"><i id="handshakeDot" class="dot green"></i> <span id="handshakeBrief">loading</span></span></li>
+                <li><span>Killswitch</span> <span class="status-indicator"><i id="markerDot" class="dot green"></i> <span id="markerBrief">loading</span></span></li>
+                <li><span>NFT Rules</span> <span class="status-indicator"><i id="nftDot" class="dot green"></i> <span id="nftBrief">loading</span></span></li>
+                <li><span>Persisted Rules</span> <span class="status-indicator"><i id="persistedDot" class="dot green"></i> <span id="persistedBrief">loading</span></span></li>
+              </ul>
+            </div>
+            <div class="report-section">
+              <h4>Docker & Daemons</h4>
+              <ul class="report-list" id="daemonBriefRows">
+                <li><span>Services</span><span>loading</span></li>
+              </ul>
+            </div>
+            <div class="report-section wide">
+              <h4>Exposed Ports Overview</h4>
+              <ul class="report-list port-list" id="briefPortRows">
+                <li><span>loading</span><span></span></li>
+              </ul>
+            </div>
+          </div>
+        </section>
+      </div>
       <aside class="side">
         <section class="panel">
           <h2>Live System</h2>
@@ -487,14 +618,7 @@ def render_dashboard(data: dict[str, Any]) -> str:
           </table>
         </section>
         <section class="panel">
-          <h2>Open Ports</h2>
-          <table>
-            <thead><tr><th>Port</th><th>Scope</th><th>Use</th></tr></thead>
-            <tbody id="portRows"></tbody>
-          </table>
-        </section>
-        <section class="panel">
-          <h2>Services</h2>
+          <h2>Core Services</h2>
           <table>
             <thead><tr><th>Service</th><th>State</th></tr></thead>
             <tbody id="serviceRows"></tbody>
@@ -505,6 +629,7 @@ def render_dashboard(data: dict[str, Any]) -> str:
     <footer>Read-only local dashboard. Public access should stay behind Cosmos authentication. Last update: <span id="updated">initial</span></footer>
   </main>
   <script>
+    const redactIps = (value) => String(value || "").replace(/\\b(?:\\d{{1,3}}\\.){{3}}\\d{{1,3}}\\b/g, "hidden");
     const fmtBytes = (value) => {{
       if (value === null || value === undefined) return "--";
       const units = ["B", "KB", "MB", "GB", "TB"];
@@ -518,14 +643,41 @@ def render_dashboard(data: dict[str, Any]) -> str:
       el.style.width = `${{Math.max(0, Math.min(100, Number(pct || 0)))}}%`;
     }};
     const pillClass = (state) => state === "active" ? "ok" : (state === "inactive" || state === "unknown" ? "warn" : "bad");
+    const dotClass = (ok) => `dot ${{ok ? "green" : "red"}}`;
+    const serviceLabel = (name) => name.replace(".service", "");
+    const serviceOk = (row) => row.state === "active" || (row.name === "docker.service" && row.state === "inactive");
+    const briefName = (name) => {{
+      const n = serviceLabel(name);
+      if (n === "nft-watchdog") return "Watchdog";
+      if (n === "nft-listener") return "Listener";
+      if (n === "nft-ssh-alert") return "SSH Alert";
+      if (n === "CosmosCloud") return "Cosmos";
+      if (n === "docker") return "Docker";
+      return n;
+    }};
     async function refresh() {{
       const res = await fetch("/api/dashboard", {{cache: "no-store"}});
       const data = await res.json();
       const h = data.health || {{}};
       const s = data.system || {{}};
       document.getElementById("status").textContent = h.status || "UNKNOWN";
-      document.getElementById("reason").textContent = h.reason || "No reason reported";
+      document.getElementById("reason").textContent = redactIps(h.reason || "No reason reported");
       document.querySelector(".status-card").className = `status-card ${{(h.status || "").toUpperCase() === "HEALTHY" ? "ok" : "warn"}}`;
+      document.getElementById("briefStatus").textContent = h.status || "UNKNOWN";
+      document.getElementById("briefDate").textContent = new Date().toLocaleString(undefined, {{weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"}});
+      document.getElementById("vpnIp").textContent = "hidden";
+      document.getElementById("handshake").textContent = h.handshake_age_s === null || h.handshake_age_s === undefined ? "--" : `${{h.handshake_age_s}}s`;
+      document.getElementById("markers").textContent = h.markers || "--";
+      document.getElementById("nftRules").textContent = h.nft_integrity ? "intact" : "check";
+      document.getElementById("persistedRules").textContent = h.persisted_ruleset_integrity || "unknown";
+      document.getElementById("vpnState").textContent = h.vpn_ip ? "hidden" : "unknown";
+      document.getElementById("handshakeBrief").textContent = h.handshake_age_s === null || h.handshake_age_s === undefined ? "unknown" : `${{h.handshake_age_s}}s ago`;
+      document.getElementById("markerBrief").textContent = h.markers === "ok" ? "Active" : (h.markers || "check");
+      document.getElementById("nftBrief").textContent = h.nft_integrity ? "Intact" : "Check";
+      document.getElementById("persistedBrief").textContent = h.persisted_ruleset_integrity || "unknown";
+      document.getElementById("markerDot").className = dotClass(h.markers === "ok");
+      document.getElementById("nftDot").className = dotClass(Boolean(h.nft_integrity));
+      document.getElementById("persistedDot").className = dotClass(h.persisted_ruleset_integrity === "ok");
 
       const cpu = (s.cpu || {{}});
       const cpuPct = cpu.percent ?? ((cpu.load_ratio || 0) * 100);
@@ -546,13 +698,17 @@ def render_dashboard(data: dict[str, Any]) -> str:
         `<tr><td><code>${{row.iface}}</code></td><td>${{fmtRate(row.rx_rate)}}</td><td>${{fmtRate(row.tx_rate)}}</td></tr>`
       ).join("") || "<tr><td colspan=\\"3\\">No interface data</td></tr>";
 
-      document.getElementById("portRows").innerHTML = (s.ports || []).map(row =>
-        `<tr><td><code>${{row.port}}/${{row.proto}}</code></td><td>${{row.scope}}</td><td>${{row.label || "configured"}}</td></tr>`
-      ).join("") || "<tr><td colspan=\\"3\\">No configured ports</td></tr>";
+      document.getElementById("briefPortRows").innerHTML = (s.ports || []).map(row =>
+        `<li><span><code>${{row.port}}/${{row.proto}}</code></span><span>${{row.label || "configured"}} (${{row.scope}})</span></li>`
+      ).join("") || "<li><span>No configured ports</span><span></span></li>";
 
       document.getElementById("serviceRows").innerHTML = (s.services || []).map(row =>
-        `<tr><td>${{row.name.replace(".service", "")}}</td><td><span class="pill ${{pillClass(row.state)}}">${{row.state}}</span></td></tr>`
+        `<tr><td>${{serviceLabel(row.name)}}</td><td><span class="pill ${{pillClass(row.state)}}">${{row.state}}</span></td></tr>`
       ).join("");
+      document.getElementById("daemonBriefRows").innerHTML = (s.services || [])
+        .filter(row => ["nft-watchdog.service", "nft-listener.service", "nft-ssh-alert.service", "CosmosCloud.service", "docker.service"].includes(row.name))
+        .map(row => `<li><span>${{briefName(row.name)}}</span><span class="status-indicator"><i class="${{dotClass(serviceOk(row))}}"></i> ${{row.state}}</span></li>`)
+        .join("") || "<li><span>Services</span><span>unknown</span></li>";
 
       document.getElementById("updated").textContent = new Date().toLocaleTimeString();
     }}

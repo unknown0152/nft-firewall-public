@@ -31,10 +31,11 @@ def test_webui_renders_read_only_dashboard():
 
     assert "NFT Firewall" in html
     assert "HEALTHY" in html
-    assert "10.0.0.2" in html
+    assert "10.0.0.2" not in html
+    assert "hidden" in html
     assert "/api/dashboard" in html
     assert "Network Throughput" in html
-    assert "Open Ports" in html
+    assert "Exposed Ports Overview" in html
     assert "Live System" in html
     assert "<form" not in html
     assert "method=\"post\"" not in html.lower()
