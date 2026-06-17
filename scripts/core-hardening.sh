@@ -42,6 +42,77 @@ ensure_package_command() {
   fi
 }
 
+append_unique_id() {
+  local var_name="$1" value="$2" existing
+  [[ "$value" =~ ^[0-9]+$ ]] || return 0
+  for existing in ${!var_name}; do
+    [[ "$existing" == "$value" ]] && return 0
+  done
+  printf -v "$var_name" '%s %s' "${!var_name}" "$value"
+}
+
+add_user_spec_ids() {
+  local user_spec="$1"
+  [[ -n "$user_spec" ]] || return 0
+
+  local uid="${user_spec%%:*}"
+  local gid=""
+  [[ "$user_spec" == *:* ]] && gid="${user_spec#*:}"
+
+  append_unique_id CONTAINER_UIDS "$uid"
+  append_unique_id CONTAINER_GIDS "$gid"
+}
+
+discover_container_permission_ids() {
+  local path uid gid line
+
+  while IFS= read -r path; do
+    [[ -e "$path" ]] || continue
+    uid="$(stat -c %u "$path" 2>/dev/null || true)"
+    gid="$(stat -c %g "$path" 2>/dev/null || true)"
+    append_unique_id CONTAINER_UIDS "$uid"
+    append_unique_id CONTAINER_GIDS "$gid"
+  done < <(find "$APP_CONFIG_DIR" "$MEDIA_LIBRARY_DIR" -mindepth 1 -maxdepth 2 -type d 2>/dev/null || true)
+
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local containers=()
+  mapfile -t containers < <(docker ps -aq 2>/dev/null || true)
+  [[ "${#containers[@]}" -gt 0 ]] || return 0
+
+  while IFS= read -r line; do
+    case "$line" in
+      PUID=*) append_unique_id CONTAINER_UIDS "${line#PUID=}" ;;
+      PGID=*) append_unique_id CONTAINER_GIDS "${line#PGID=}" ;;
+    esac
+  done < <(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${containers[@]}" 2>/dev/null || true)
+
+  while IFS= read -r line; do
+    add_user_spec_ids "$line"
+  done < <(docker inspect --format '{{.Config.User}}' "${containers[@]}" 2>/dev/null || true)
+}
+
+discover_cosmos_bind_dirs() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local containers=()
+  mapfile -t containers < <(docker ps -aq 2>/dev/null || true)
+  [[ "${#containers[@]}" -gt 0 ]] || return 0
+
+  local source
+  while IFS= read -r source; do
+    case "$source" in
+      "$APP_CONFIG_DIR"/*|"$MEDIA_LIBRARY_DIR"/*)
+        mkdir -p "$source"
+        ;;
+    esac
+  done < <(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "${containers[@]}" 2>/dev/null || true)
+}
+
 apply_container_acl() {
   local path="$1"
   [[ -d "$path" ]] || return 0
@@ -83,6 +154,10 @@ repair_media_stack_permissions() {
   for dir in "${app_dirs[@]}"; do
     mkdir -p "$dir"
   done
+  discover_cosmos_bind_dirs
+  discover_container_permission_ids
+  echo "[+] Container ACL users: $CONTAINER_UIDS"
+  echo "[+] Container ACL groups: $CONTAINER_GIDS"
 
   chown -R "$MEDIA_USER:$MEDIA_USER" "$APP_CONFIG_DIR" "$MEDIA_LIBRARY_DIR"
   chmod -R u+rwX,g+rwX "$APP_CONFIG_DIR" "$MEDIA_LIBRARY_DIR"
@@ -399,6 +474,99 @@ fi
 cat > /usr/local/bin/fix-cosmos-perms <<'EOF'
 #!/usr/bin/env bash
 set -e
+APP_CONFIG_DIR="/srv/config"
+MEDIA_LIBRARY_DIR="/srv/media"
+CONTAINER_UIDS="${NFT_FIREWALL_CONTAINER_UIDS:-1000 1001}"
+CONTAINER_GIDS="${NFT_FIREWALL_CONTAINER_GIDS:-1000 1001}"
+
+append_unique_id() {
+  local var_name="$1" value="$2" existing
+  [[ "$value" =~ ^[0-9]+$ ]] || return 0
+  for existing in ${!var_name}; do
+    [[ "$existing" == "$value" ]] && return 0
+  done
+  printf -v "$var_name" '%s %s' "${!var_name}" "$value"
+}
+
+add_user_spec_ids() {
+  local user_spec="$1"
+  [[ -n "$user_spec" ]] || return 0
+
+  local uid="${user_spec%%:*}"
+  local gid=""
+  [[ "$user_spec" == *:* ]] && gid="${user_spec#*:}"
+
+  append_unique_id CONTAINER_UIDS "$uid"
+  append_unique_id CONTAINER_GIDS "$gid"
+}
+
+discover_container_permission_ids() {
+  local path uid gid line
+
+  while IFS= read -r path; do
+    [[ -e "$path" ]] || continue
+    uid="$(stat -c %u "$path" 2>/dev/null || true)"
+    gid="$(stat -c %g "$path" 2>/dev/null || true)"
+    append_unique_id CONTAINER_UIDS "$uid"
+    append_unique_id CONTAINER_GIDS "$gid"
+  done < <(find "$APP_CONFIG_DIR" "$MEDIA_LIBRARY_DIR" -mindepth 1 -maxdepth 2 -type d 2>/dev/null || true)
+
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local containers=()
+  mapfile -t containers < <(docker ps -aq 2>/dev/null || true)
+  [[ "${#containers[@]}" -gt 0 ]] || return 0
+
+  while IFS= read -r line; do
+    case "$line" in
+      PUID=*) append_unique_id CONTAINER_UIDS "${line#PUID=}" ;;
+      PGID=*) append_unique_id CONTAINER_GIDS "${line#PGID=}" ;;
+    esac
+  done < <(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${containers[@]}" 2>/dev/null || true)
+
+  while IFS= read -r line; do
+    add_user_spec_ids "$line"
+  done < <(docker inspect --format '{{.Config.User}}' "${containers[@]}" 2>/dev/null || true)
+}
+
+discover_cosmos_bind_dirs() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local containers=()
+  mapfile -t containers < <(docker ps -aq 2>/dev/null || true)
+  [[ "${#containers[@]}" -gt 0 ]] || return 0
+
+  local source
+  while IFS= read -r source; do
+    case "$source" in
+      "$APP_CONFIG_DIR"/*|"$MEDIA_LIBRARY_DIR"/*)
+        mkdir -p "$source"
+        ;;
+    esac
+  done < <(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "${containers[@]}" 2>/dev/null || true)
+}
+
+apply_container_acl() {
+  local path="$1"
+  [[ -d "$path" ]] || return 0
+  command -v setfacl >/dev/null 2>&1 || return 0
+
+  local acl_args=()
+  local uid gid
+  for uid in $CONTAINER_UIDS; do
+    acl_args+=("-m" "u:${uid}:rwx" "-m" "d:u:${uid}:rwx")
+  done
+  for gid in $CONTAINER_GIDS; do
+    acl_args+=("-m" "g:${gid}:rwx" "-m" "d:g:${gid}:rwx")
+  done
+
+  setfacl -R "${acl_args[@]}" "$path"
+}
+
 mkdir -p /srv/cosmos/config /srv/cosmos-storage /srv/config /srv/media /srv/backups /srv/docker
 chown media:media /srv/cosmos /srv/cosmos/config /srv/cosmos-storage /srv/config /srv/media /srv/backups
 chown media:media /opt/cosmos
@@ -412,12 +580,13 @@ chmod 2775 /srv/config /srv/media
 chmod 710 /srv/docker
 chmod 755 /opt/cosmos
 mkdir -p /srv/config/danish-intelligence /srv/config/prowlarr /srv/config/radarr /srv/config/sonarr /srv/config/radarr-2160p /srv/config/sonarr-2160p /srv/config/seerr /srv/config/altmount /srv/config/plex /srv/config/jellyfin
+discover_cosmos_bind_dirs
+discover_container_permission_ids
 chown -R media:media /srv/config /srv/media
 chmod -R u+rwX,g+rwX /srv/config /srv/media
 find /srv/config /srv/media -type d -exec chmod 2775 {} +
-if command -v setfacl >/dev/null 2>&1; then
-  setfacl -R -m u:1000:rwx,d:u:1000:rwx,u:1001:rwx,d:u:1001:rwx,g:1000:rwx,d:g:1000:rwx,g:1001:rwx,d:g:1001:rwx /srv/config /srv/media
-fi
+apply_container_acl /srv/config
+apply_container_acl /srv/media
 EOF
 chmod +x /usr/local/bin/fix-cosmos-perms
 

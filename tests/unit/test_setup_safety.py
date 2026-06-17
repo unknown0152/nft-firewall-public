@@ -88,6 +88,11 @@ def test_core_hardening_repairs_cosmos_bind_mount_permissions():
     text = script.read_text()
 
     assert "repair_media_stack_permissions" in text
+    assert "discover_container_permission_ids" in text
+    assert "discover_cosmos_bind_dirs" in text
+    assert "docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}'" in text
+    assert "PUID=*" in text
+    assert "PGID=*" in text
     assert "setfacl -R" in text
     assert 'CONTAINER_UIDS="${NFT_FIREWALL_CONTAINER_UIDS:-1000 1001}"' in text
     assert "/srv/config/seerr" in text
