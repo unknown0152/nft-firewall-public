@@ -329,68 +329,78 @@ def render_dashboard(data: dict[str, Any]) -> str:
   <style>
     :root {{
       color-scheme: dark;
-      --bg: #09090b;
-      --surface: rgba(24, 24, 27, 0.6);
-      --surface-border: rgba(255, 255, 255, 0.08);
-      --surface-hover: rgba(39, 39, 42, 0.8);
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
-      --green: #22c55e;
-      --green-glow: rgba(34, 197, 94, 0.2);
-      --yellow: #eab308;
-      --red: #ef4444;
-      --blue: #3b82f6;
-      --cyan: #06b6d4;
-      --gradient: linear-gradient(135deg, var(--blue), var(--cyan));
+      --bg: #080a0d;
+      --bg-2: #0c1117;
+      --panel: #111821;
+      --panel-2: #151e29;
+      --panel-3: #0d131a;
+      --line: rgba(188, 202, 220, 0.14);
+      --line-strong: rgba(188, 202, 220, 0.24);
+      --text: #edf2f7;
+      --soft: #b7c1ce;
+      --muted: #7f8b9a;
+      --green: #34d399;
+      --green-glow: rgba(52, 211, 153, 0.22);
+      --yellow: #fbbf24;
+      --red: #fb7185;
+      --cyan: #38bdf8;
+      --violet: #a78bfa;
+      --orange: #fb923c;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       min-height: 100vh;
       background:
-        radial-gradient(circle at top left, rgba(59, 130, 246, 0.15), transparent 400px),
-        radial-gradient(circle at bottom right, rgba(6, 182, 212, 0.1), transparent 400px),
+        linear-gradient(180deg, #0b0f14 0%, var(--bg) 42%, #07080b 100%),
         var(--bg);
       color: var(--text);
       font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      letter-spacing: 0.2px;
+      letter-spacing: 0;
     }}
-    main {{ width: min(1280px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 48px; }}
+    main {{ width: min(1360px, calc(100% - 28px)); margin: 0 auto; padding: 24px 0 36px; }}
     header {{
       display: flex;
       justify-content: space-between;
-      align-items: flex-end;
+      align-items: stretch;
       flex-wrap: wrap;
-      gap: 24px;
-      padding-bottom: 24px;
-      border-bottom: 1px solid var(--surface-border);
-      margin-bottom: 24px;
+      gap: 14px;
+      margin-bottom: 14px;
     }}
     h1 {{
       margin: 0;
-      font-size: clamp(32px, 5vw, 48px);
-      font-weight: 800;
-      background: var(--gradient);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      font-size: clamp(24px, 3vw, 34px);
+      font-weight: 760;
       letter-spacing: 0;
+    }}
+    .masthead {{
+      min-width: min(620px, 100%);
+      flex: 1 1 auto;
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(21, 30, 41, 0.92), rgba(12, 17, 23, 0.92));
+      box-shadow: var(--shadow);
     }}
     .subtitle {{
       margin-top: 8px;
-      color: var(--muted);
+      color: var(--soft);
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 13px;
     }}
     .status-card {{
-      padding: 16px 24px;
-      border: 1px solid var(--surface-border);
-      border-radius: 12px;
-      background: var(--surface);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      min-width: 260px;
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--yellow);
+      border-radius: 8px;
+      background: var(--panel);
       text-align: right;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+      box-shadow: var(--shadow);
     }}
+    .status-card.ok {{ border-left-color: var(--green); }}
+    .status-card.warn {{ border-left-color: var(--yellow); }}
     .eyebrow {{
       display: block;
       color: var(--muted);
@@ -399,44 +409,39 @@ def render_dashboard(data: dict[str, Any]) -> str:
       letter-spacing: 1px;
       font-weight: 600;
     }}
-    .status-card strong {{ display: block; margin-top: 4px; font-size: 24px; }}
-    .ok strong, .ok .value {{ color: var(--green); text-shadow: 0 0 12px var(--green-glow); }}
+    .status-card strong {{ display: block; margin-top: 4px; font-size: 26px; }}
+    .ok strong, .ok .value {{ color: var(--green); }}
     .warn strong, .warn .value {{ color: var(--yellow); }}
     .bad strong, .bad .value {{ color: var(--red); }}
     .metrics {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px;
-      margin-bottom: 32px;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
     }}
     .metric {{
-      padding: 16px;
-      border-radius: 12px;
-      background: var(--surface);
-      border: 1px solid var(--surface-border);
-      backdrop-filter: blur(8px);
-      transition: transform 0.2s ease, border-color 0.2s ease;
+      min-height: 88px;
+      padding: 14px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
     }}
-    .metric:hover {{
-      transform: translateY(-2px);
-      border-color: rgba(255, 255, 255, 0.2);
-    }}
-    .metric span {{ display: block; color: var(--muted); font-size: 12px; font-weight: 500; }}
-    .metric strong {{ display: block; margin-top: 6px; font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }}
+    .metric span {{ display: block; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }}
+    .metric strong {{ display: block; margin-top: 10px; font-size: 19px; font-weight: 680; overflow-wrap: anywhere; }}
     .metric.ok strong {{ color: var(--green); }}
     .metric.warn strong {{ color: var(--yellow); }}
     .layout {{
       display: grid;
-      grid-template-columns: 1fr 400px;
-      gap: 24px;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 14px;
     }}
     .panel {{
-      padding: 24px;
-      border-radius: 12px;
-      background: var(--surface);
-      border: 1px solid var(--surface-border);
-      backdrop-filter: blur(12px);
-      margin-bottom: 24px;
+      padding: 18px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
+      margin-bottom: 14px;
     }}
     .panel h2 {{
       margin: 0 0 16px;
@@ -445,8 +450,12 @@ def render_dashboard(data: dict[str, Any]) -> str:
       color: var(--text);
     }}
     .report-header {{
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--surface-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
       margin-bottom: 16px;
     }}
     .report-header h3 {{ margin: 0 0 4px; font-size: 18px; color: var(--text); }}
@@ -454,31 +463,47 @@ def render_dashboard(data: dict[str, Any]) -> str:
     .report-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 24px;
+      gap: 14px;
+    }}
+    .report-section {{
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-3);
     }}
     .report-section.wide {{ grid-column: 1 / -1; }}
     .report-section h4 {{
       margin: 0 0 12px;
       font-size: 14px;
-      color: var(--cyan);
+      color: var(--soft);
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }}
     .report-list {{ list-style: none; padding: 0; margin: 0; }}
     .report-list li {{
-      padding: 6px 0;
+      padding: 8px 0;
       color: var(--text);
       font-size: 13px;
       display: flex;
       justify-content: space-between;
       gap: 16px;
-      border-bottom: 1px dashed rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(188, 202, 220, 0.08);
     }}
     .port-list {{
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 0 24px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
     }}
+    .port-list li {{
+      display: grid;
+      gap: 6px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+    }}
+    .port-line {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+    .port-label {{ color: var(--soft); overflow-wrap: anywhere; }}
     .status-indicator {{ display: inline-flex; align-items: center; gap: 6px; }}
     .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; }}
     .dot.green {{ background: var(--green); box-shadow: 0 0 8px var(--green-glow); }}
@@ -491,22 +516,22 @@ def render_dashboard(data: dict[str, Any]) -> str:
     .bar-head strong {{ color: var(--text); font-weight: 500; }}
     .track {{
       height: 8px;
-      background: rgba(0,0,0,0.4);
+      background: rgba(0,0,0,0.34);
       border-radius: 99px;
       overflow: hidden;
-      border: 1px solid var(--surface-border);
+      border: 1px solid var(--line);
     }}
     .fill {{
       height: 100%;
-      background: var(--gradient);
+      background: linear-gradient(90deg, var(--cyan), var(--green));
       border-radius: 99px;
       transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.24);
     }}
     table {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
     th, td {{
       padding: 10px 4px;
-      border-bottom: 1px solid var(--surface-border);
+      border-bottom: 1px solid var(--line);
       text-align: left;
       font-size: 13px;
     }}
@@ -520,30 +545,36 @@ def render_dashboard(data: dict[str, Any]) -> str:
     td:last-child, th:last-child {{ text-align: right; }}
     tbody tr:last-child td {{ border-bottom: none; }}
     tbody tr:hover td {{ background: rgba(255,255,255,0.02); }}
-    .pill {{ display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--surface-3); color: var(--soft); }}
+    .pill {{ display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--panel-3); color: var(--soft); font-size: 12px; font-weight: 700; }}
     .pill.ok {{ background: rgba(34,197,94,0.1); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }}
     .pill.warn {{ background: rgba(234,179,8,0.1); color: var(--yellow); border: 1px solid rgba(234,179,8,0.2); }}
     .pill.bad {{ background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }}
     code {{
       font-family: ui-monospace, SFMono-Regular, monospace;
-      background: rgba(0,0,0,0.3);
+      background: rgba(0,0,0,0.34);
       padding: 2px 6px;
       border-radius: 4px;
       color: var(--cyan);
       font-size: 12px;
     }}
-    footer {{ margin-top: 24px; text-align: center; color: var(--muted); font-size: 12px; }}
+    footer {{ margin-top: 18px; text-align: right; color: var(--muted); font-size: 12px; }}
     @media (max-width: 1000px) {{
       .layout {{ grid-template-columns: 1fr; }}
-      header {{ flex-direction: column; align-items: flex-start; }}
+      .metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .status-card {{ width: 100%; text-align: left; }}
+    }}
+    @media (max-width: 640px) {{
+      main {{ width: min(100% - 20px, 1360px); padding-top: 10px; }}
+      .metrics {{ grid-template-columns: 1fr; }}
+      .report-header {{ display: block; }}
+      .port-list {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div>
+      <div class="masthead">
         <h1>NFT Firewall</h1>
         <div class="subtitle" id="reason">{html.escape(reason)}</div>
       </div>
@@ -563,8 +594,11 @@ def render_dashboard(data: dict[str, Any]) -> str:
       <div class="main-content">
         <section class="panel">
           <div class="report-header">
-            <h3 id="briefTitle">Good Morning — Firewall Brief</h3>
-            <p><span id="briefDate">loading</span> • <span id="briefStatus" class="value">{html.escape(status)}</span></p>
+            <div>
+              <h3 id="briefTitle">Good Morning — Firewall Brief</h3>
+              <p><span id="briefDate">loading</span></p>
+            </div>
+            <span class="pill {status_class}" id="briefStatus">{html.escape(status)}</span>
           </div>
           <div class="report-grid">
             <div class="report-section">
@@ -626,7 +660,7 @@ def render_dashboard(data: dict[str, Any]) -> str:
         </section>
       </aside>
     </section>
-    <footer>Read-only local dashboard. Public access should stay behind Cosmos authentication. Last update: <span id="updated">initial</span></footer>
+    <footer>Last refresh: <span id="updated">initial</span></footer>
   </main>
   <script>
     const redactIps = (value) => String(value || "").replace(/\\b(?:\\d{{1,3}}\\.){{3}}\\d{{1,3}}\\b/g, "hidden");
@@ -664,6 +698,7 @@ def render_dashboard(data: dict[str, Any]) -> str:
       document.getElementById("reason").textContent = redactIps(h.reason || "No reason reported");
       document.querySelector(".status-card").className = `status-card ${{(h.status || "").toUpperCase() === "HEALTHY" ? "ok" : "warn"}}`;
       document.getElementById("briefStatus").textContent = h.status || "UNKNOWN";
+      document.getElementById("briefStatus").className = `pill ${{(h.status || "").toUpperCase() === "HEALTHY" ? "ok" : "warn"}}`;
       document.getElementById("briefDate").textContent = new Date().toLocaleString(undefined, {{weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"}});
       document.getElementById("vpnIp").textContent = "hidden";
       document.getElementById("handshake").textContent = h.handshake_age_s === null || h.handshake_age_s === undefined ? "--" : `${{h.handshake_age_s}}s`;
@@ -699,7 +734,7 @@ def render_dashboard(data: dict[str, Any]) -> str:
       ).join("") || "<tr><td colspan=\\"3\\">No interface data</td></tr>";
 
       document.getElementById("briefPortRows").innerHTML = (s.ports || []).map(row =>
-        `<li><span><code>${{row.port}}/${{row.proto}}</code></span><span>${{row.label || "configured"}} (${{row.scope}})</span></li>`
+        `<li><div class="port-line"><code>${{row.port}}/${{row.proto}}</code><span class="pill">${{row.scope}}</span></div><span class="port-label">${{row.label || "configured"}}</span></li>`
       ).join("") || "<li><span>No configured ports</span><span></span></li>";
 
       document.getElementById("serviceRows").innerHTML = (s.services || []).map(row =>
