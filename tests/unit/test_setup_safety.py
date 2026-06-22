@@ -43,10 +43,12 @@ def test_keybase_wrapper_sets_login_like_environment():
     text = setup_py.read_text()
 
     assert 'kb_user="{kb_user or ""}"' in text
-    assert 'exec /usr/sbin/runuser -l "$kb_user"' in text
-    assert 'cmd="exec /usr/bin/keybase"' in text
-    assert 'printf -v quoted " %q" "$arg"' in text
-    assert 'exec /usr/sbin/runuser -l "$kb_user" -c "$cmd"' in text
+    assert 'kb_uid="$(id -u "$kb_user")"' in text
+    assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' in text
+    assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"' in text
+    assert 'exec /usr/sbin/runuser -u "$kb_user" -- env' in text
+    assert '/usr/bin/keybase "$@"' in text
+    assert 'runuser -l "$kb_user"' not in text
 
 
 def test_firewall_threatfeed_service_uses_real_cli_command():

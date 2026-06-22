@@ -872,10 +872,10 @@ def _read_keybase_user() -> str:
 def _install_keybase_wrapper(kb_user: str) -> None:
     """Write /usr/local/bin/nft-keybase-notify — the sudoers-safe Keybase wrapper.
 
-    The wrapper is executed as root via a pinned sudoers rule, then uses runuser
-    to execute keybase through the configured user's login session. This matches
-    the session state that works under `sudo -iu <user> keybase ...` while
-    keeping the daemon-facing sudo command constrained to one exact path.
+    The wrapper is executed as root via a pinned sudoers rule, then uses
+    runuser without a login shell while preserving the configured user's
+    runtime environment. Keybase on Debian stores its active socket under
+    /run/user/<uid>/keybase; a login-shell runuser path can miss that socket.
     """
     wrapper = Path("/usr/local/bin/nft-keybase-notify")
 
@@ -902,12 +902,25 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         '  echo "Keybase linux_user is not configured" >&2\n'
         "  exit 1\n"
         "fi\n"
-        'cmd="exec /usr/bin/keybase"\n'
-        'for arg in "$@"; do\n'
-        '  printf -v quoted " %q" "$arg"\n'
-        '  cmd+="$quoted"\n'
-        "done\n"
-        'exec /usr/sbin/runuser -l "$kb_user" -c "$cmd"\n'
+        'kb_uid="$(id -u "$kb_user")"\n'
+        'kb_home="$(getent passwd "$kb_user" | cut -d: -f6)"\n'
+        'export HOME="$kb_home"\n'
+        'export USER="$kb_user"\n'
+        'export LOGNAME="$kb_user"\n'
+        'export SHELL="/bin/bash"\n'
+        'export XDG_RUNTIME_DIR="/run/user/$kb_uid"\n'
+        'export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"\n'
+        'export PATH="/usr/local/bin:/usr/bin:/bin"\n'
+        'cd "$HOME" 2>/dev/null || true\n'
+        'exec /usr/sbin/runuser -u "$kb_user" -- env \\\n'
+        '  HOME="$HOME" \\\n'
+        '  USER="$USER" \\\n'
+        '  LOGNAME="$LOGNAME" \\\n'
+        '  SHELL="$SHELL" \\\n'
+        '  XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \\\n'
+        '  DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \\\n'
+        '  PATH="$PATH" \\\n'
+        '  /usr/bin/keybase "$@"\n'
     )
 
     wrapper.write_text(script)
