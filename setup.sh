@@ -22,10 +22,20 @@ RUN_SAFE_APPLY=0
 PROFILE=""
 MODE_SELECTED=0
 ADVANCED_SELECTED=0
+UPDATE_ONLY=0
 
 while [[ "$#" -gt 0 ]]; do
     arg="$1"
     case "$arg" in
+        --update|--upgrade)
+            MODE_SELECTED=1
+            UPDATE_ONLY=1
+            RUN_INTEGRATIONS=0
+            INSTALL_DOCKER=0
+            INSTALL_KEYBASE=0
+            KEYBASE_LOGIN=0
+            ENABLE_WEBUI=0
+            ;;
         --core)
             # Explicit core-only mode. This is also the default.
             MODE_SELECTED=1
@@ -105,6 +115,7 @@ Default behavior:
   In non-interactive shells, it falls back to --core.
 
 Simple modes:
+  --update      update existing nft-firewall install; no config wizard
   --core        core firewall only (default)
   --cosmos      core + Cosmos/media hardening + Docker + web dashboard
   --media       alias for --cosmos
@@ -126,6 +137,7 @@ Advanced compatibility flags:
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
+  curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --cosmos
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login
 USAGE
@@ -177,6 +189,25 @@ guided_install_mode() {
     [[ "$MODE_SELECTED" -eq 0 && "$ADVANCED_SELECTED" -eq 0 && -r /dev/tty ]] || return
 
     echo ""
+    if [[ -d /opt/nft-firewall && -f /opt/nft-firewall/config/firewall.ini ]]; then
+        echo "Existing nft-firewall install detected."
+        echo "  1) Update only (code, wrappers, units, restart, validate)"
+        echo "  2) Re-run guided install"
+        echo ""
+        printf "Choose [1-2, default 1]: " > /dev/tty
+        read -r existing_choice < /dev/tty || existing_choice=""
+        existing_choice="${existing_choice:-1}"
+        if [[ "$existing_choice" != "2" ]]; then
+            UPDATE_ONLY=1
+            RUN_INTEGRATIONS=0
+            INSTALL_DOCKER=0
+            INSTALL_KEYBASE=0
+            KEYBASE_LOGIN=0
+            ENABLE_WEBUI=0
+            return
+        fi
+    fi
+
     echo "Choose install type:"
     echo "  1) Core firewall only"
     echo "  2) Cosmos/media server (Docker + dashboard)"
@@ -209,7 +240,7 @@ guided_install_mode() {
 }
 
 guided_install_mode
-echo "[+] Mode: integrations=$RUN_INTEGRATIONS docker=$INSTALL_DOCKER keybase=$INSTALL_KEYBASE keybase_login=$KEYBASE_LOGIN webui=$ENABLE_WEBUI validate=$RUN_VALIDATE safe_apply=$RUN_SAFE_APPLY"
+echo "[+] Mode: update=$UPDATE_ONLY integrations=$RUN_INTEGRATIONS docker=$INSTALL_DOCKER keybase=$INSTALL_KEYBASE keybase_login=$KEYBASE_LOGIN webui=$ENABLE_WEBUI validate=$RUN_VALIDATE safe_apply=$RUN_SAFE_APPLY"
 
 # 1. Install mandatory system packages if missing
 echo "[+] Updating package cache and installing mandatory tools..."
@@ -244,10 +275,16 @@ cd "$INSTALL_TMP"
 chmod +x scripts/safe-nft-apply.sh # Ensure internal scripts are ready
 
 # We run setup.py directly for the core firewall install
-echo "[+] Running core installation..."
+if [[ "$UPDATE_ONLY" -eq 1 ]]; then
+    echo "[+] Running update-only installation..."
+else
+    echo "[+] Running core installation..."
+fi
 # Handle interactive TTY for the wizard. A core installer failure must stop the
 # bootstrapper before any optional integrations are attempted.
-if [[ -r /dev/tty ]]; then
+if [[ "$UPDATE_ONLY" -eq 1 ]]; then
+    python3 setup.py install
+elif [[ -r /dev/tty ]]; then
     python3 setup.py install </dev/tty
 else
     python3 setup.py install

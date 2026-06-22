@@ -65,6 +65,11 @@ curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/mai
 The guided menu offers:
 
 ```text
+Existing install detected:
+1) Update only (code, wrappers, units, restart, validate)
+2) Re-run guided install
+
+Fresh install:
 1) Core firewall only
 2) Cosmos/media server (Docker + dashboard)
 3) Full server (Cosmos + Docker + dashboard + Keybase package)
@@ -74,6 +79,9 @@ The guided menu offers:
 For automation, skip the menu with a mode flag:
 
 ```bash
+# Update existing install only, no config wizard
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update
+
 # Core firewall only
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --core
 

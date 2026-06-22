@@ -650,6 +650,12 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert "RUN_SAFE_APPLY=0" in text
     assert "MODE_SELECTED=0" in text
     assert "ADVANCED_SELECTED=0" in text
+    assert "UPDATE_ONLY=0" in text
+    assert "--update|--upgrade)" in text
+    assert "Existing nft-firewall install detected." in text
+    assert "Update only (code, wrappers, units, restart, validate)" in text
+    assert "Running update-only installation" in text
+    assert 'if [[ "$UPDATE_ONLY" -eq 1 ]]' in text
     assert "guided_install_mode" in text
     assert "Choose install type:" in text
     assert "Install type [1-4, default 2]" in text
