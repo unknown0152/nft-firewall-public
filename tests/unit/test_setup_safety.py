@@ -50,7 +50,8 @@ def test_keybase_wrapper_sets_login_like_environment():
     assert 'kb_uid="$(id -u "$kb_user")"' in text
     assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' in text
     assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"' in text
-    assert 'exec /usr/sbin/runuser -u "$kb_user" -- env' in text
+    assert 'exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/keybase "$@"' in text
+    assert 'exec "$runuser_bin" -u "$kb_user" -- env' in text
     assert '/usr/bin/keybase "$@"' in text
     assert 'runuser -l "$kb_user"' not in text
 
@@ -69,6 +70,7 @@ def test_keybase_one_off_repair_uses_generic_runtime_wrapper():
     assert 'NFT_FIREWALL_SYSTEM_USER' in text
     assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' in text
     assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"' in text
+    assert 'exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/keybase "$@"' in text
     assert 'exec "$runuser_bin" -u "$kb_user" -- env' in text
     assert '/usr/bin/keybase "$@"' in text
     assert 'runuser -l "$kb_user"' not in text

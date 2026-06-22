@@ -132,15 +132,6 @@ if ! getent passwd "$kb_user" >/dev/null; then
   exit 1
 fi
 
-runuser_bin="/usr/sbin/runuser"
-if [[ ! -x "$runuser_bin" ]]; then
-  runuser_bin="$(command -v runuser || true)"
-fi
-if [[ -z "$runuser_bin" ]]; then
-  echo "runuser command not found" >&2
-  exit 1
-fi
-
 kb_uid="$(id -u "$kb_user")"
 kb_home="$(getent passwd "$kb_user" | cut -d: -f6)"
 
@@ -153,6 +144,24 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"
 export PATH="/usr/local/bin:/usr/bin:/bin"
 
 cd "$HOME" 2>/dev/null || true
+
+sudo_bin="/usr/bin/sudo"
+if [[ ! -x "$sudo_bin" ]]; then
+  sudo_bin="$(command -v sudo || true)"
+fi
+if [[ -n "$sudo_bin" ]]; then
+  exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/keybase "$@"
+fi
+
+runuser_bin="/usr/sbin/runuser"
+if [[ ! -x "$runuser_bin" ]]; then
+  runuser_bin="$(command -v runuser || true)"
+fi
+if [[ -z "$runuser_bin" ]]; then
+  echo "sudo/runuser command not found" >&2
+  exit 1
+fi
+
 exec "$runuser_bin" -u "$kb_user" -- env \
   HOME="$HOME" \
   USER="$USER" \
