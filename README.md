@@ -137,6 +137,33 @@ sudo fw simulate cosmos-vpn-secure
 sudo fw safe-apply cosmos-vpn-secure
 ```
 
+## Uninstall
+
+Normal uninstall removes nft-firewall/Cosmos files, systemd units, sudo wrappers,
+runtime users, and the live nftables ruleset. It preserves `/etc/wireguard/*.conf`
+and system packages, including Keybase and Docker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --uninstall
+```
+
+For scripted reinstall testing, add `--yes`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --uninstall --yes
+```
+
+Keybase removal is intentionally separate because it deletes the local Keybase
+package and account state for the configured `[keybase] linux_user`:
+
+```bash
+# Remove nft-firewall/Cosmos and also purge Keybase package/local state
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --uninstall --with-keybase
+
+# Only purge Keybase package/local state
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --keybase-only
+```
+
 The optional integration path installs Cosmos as a standalone service and keeps
 Cosmos config/storage under `/srv`. The `--with-docker` path installs Docker
 Engine from Docker's Debian repository only after writing `/etc/docker/daemon.json`

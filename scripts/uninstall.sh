@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/uninstall.sh — NFT Firewall + Cosmos Uninstaller
+# scripts/uninstall.sh — NFT Firewall + Cosmos/Keybase Uninstaller
 # =============================================================================
 # Removes everything setup.py + core-hardening.sh installed, leaving the box
 # in a state where the bootstrap one-liner can run fresh against it.
 #
 # Preserved (intentionally):
-#   - System packages (nftables, wireguard, docker, etc.)
+#   - System packages (nftables, wireguard, docker, keybase, etc.)
 #   - /etc/wireguard/*.conf (your VPN keys live here)
 #   - The user running sudo (n100, nuc, etc.)
+#   - Keybase package and local account data unless --with-keybase is used
 #
 # Removed:
 #   - /opt/nft-firewall, /opt/cosmos
@@ -21,8 +22,10 @@
 #   - Live nftables ruleset (replaced with stock Debian default)
 #
 # Usage:
-#   sudo bash uninstall.sh           # interactive — prompts to confirm
-#   sudo bash uninstall.sh --yes     # non-interactive — for scripted reinstall
+#   sudo bash uninstall.sh                       # interactive — prompts to confirm
+#   sudo bash uninstall.sh --yes                 # scripted nft-firewall reinstall
+#   sudo bash uninstall.sh --with-keybase        # also purge Keybase package/state
+#   sudo bash uninstall.sh --keybase-only        # only purge Keybase package/state
 # =============================================================================
 set -uo pipefail   # -e intentionally omitted: keep going past missing pieces
 
@@ -41,17 +44,110 @@ fi
 # ── Confirmation gate ────────────────────────────────────────────────────────
 
 ASSUME_YES=0
+REMOVE_KEYBASE=0
+KEYBASE_ONLY=0
 for arg in "$@"; do
     case "$arg" in
         -y|--yes) ASSUME_YES=1 ;;
+        --with-keybase|--purge-keybase|--keybase)
+            REMOVE_KEYBASE=1
+            ;;
+        --keybase-only)
+            REMOVE_KEYBASE=1
+            KEYBASE_ONLY=1
+            ;;
         -h|--help)
-            sed -n '2,30p' "$0"
+            sed -n '2,36p' "$0"
             exit 0
+            ;;
+        *)
+            echo "[FATAL] Unknown option: $arg" >&2
+            exit 2
             ;;
     esac
 done
 
-cat <<'WARN'
+detect_keybase_user() {
+    if [[ -n "${NFT_FIREWALL_KEYBASE_USER:-}" ]]; then
+        printf '%s\n' "$NFT_FIREWALL_KEYBASE_USER"
+        return
+    fi
+    python3 - <<'PY' 2>/dev/null
+import configparser
+from pathlib import Path
+
+for path in (
+    Path("/opt/nft-firewall/config/firewall.ini"),
+    Path("/etc/nft-firewall/firewall.ini"),
+):
+    if not path.exists():
+        continue
+    cfg = configparser.ConfigParser()
+    cfg.read(path)
+    user = cfg.get("keybase", "linux_user", fallback="").strip()
+    if user:
+        print(user)
+        break
+PY
+}
+
+remove_keybase() {
+    echo ""
+    echo "[keybase] Removing Keybase package and local state ..."
+    local kb_user="${NFT_FIREWALL_KEYBASE_USER:-}"
+    if [[ -z "$kb_user" ]]; then
+        kb_user="$(detect_keybase_user || true)"
+    fi
+
+    if [[ -n "$kb_user" ]] && id "$kb_user" &>/dev/null; then
+        local kb_uid kb_home
+        kb_uid="$(id -u "$kb_user")"
+        kb_home="$(getent passwd "$kb_user" | cut -d: -f6)"
+        echo "  Keybase Linux user: $kb_user"
+        if [[ -d "$kb_home/.config/keybase/kbfs" ]]; then
+            fusermount3 -u "$kb_home/.config/keybase/kbfs" 2>/dev/null || \
+                fusermount -u "$kb_home/.config/keybase/kbfs" 2>/dev/null || true
+        fi
+        pkill -u "$kb_user" -f 'keybase|kbfs' 2>/dev/null || true
+        sleep 1
+        rm -rf "$kb_home/.config/keybase"
+        rm -rf "$kb_home/.cache/keybase"
+        rm -rf "$kb_home/.local/share/keybase"
+        rm -rf "/run/user/$kb_uid/keybase"
+        rm -f  "/tmp/nft-firewall-keybase-run.log"
+    else
+        echo "  Keybase Linux user not detected; set NFT_FIREWALL_KEYBASE_USER=<user> if needed."
+    fi
+
+    rm -f /usr/local/bin/nft-keybase-notify
+    rm -f /etc/sudoers.d/nft-firewall-keybase-fix
+
+    if dpkg-query -W -f='${Status}' keybase 2>/dev/null | grep -q "install ok installed"; then
+        apt-get purge -y keybase
+    else
+        echo "  Keybase package is not installed."
+    fi
+    rm -f /etc/apt/sources.list.d/keybase.list
+}
+
+if [[ $KEYBASE_ONLY -eq 1 ]]; then
+    cat <<'KEYBASEONLYWARN'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Keybase-only UNINSTALLER
+
+  This will purge the Keybase package and remove the configured user's
+  local Keybase state under:
+    ~/.config/keybase
+    ~/.cache/keybase
+    ~/.local/share/keybase
+
+  PRESERVED:
+    nft-firewall, Cosmos, WireGuard config, Docker, and nftables rules
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+KEYBASEONLYWARN
+else
+    cat <<'WARN'
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   NFT Firewall + Cosmos UNINSTALLER
 
@@ -67,18 +163,40 @@ cat <<'WARN'
 
   PRESERVED:
     /etc/wireguard/*.conf  (your VPN keys)
-    System packages (nftables, wireguard, docker, ...)
+    System packages (nftables, wireguard, docker, keybase, ...)
     Your login user
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 WARN
+fi
+
+if [[ $REMOVE_KEYBASE -eq 1 && $KEYBASE_ONLY -eq 0 ]]; then
+    cat <<'KEYBASEWARN'
+  EXTRA KEYBASE REMOVAL ENABLED:
+    This also purges the Keybase package and removes the configured user's
+    local Keybase state under ~/.config/keybase, ~/.cache/keybase, and
+    ~/.local/share/keybase.
+
+KEYBASEWARN
+fi
 
 if [[ $ASSUME_YES -ne 1 ]]; then
-    read -r -p "Type 'wipe' to proceed: " ans
-    if [[ "$ans" != "wipe" ]]; then
+    expected="wipe"
+    if [[ $REMOVE_KEYBASE -eq 1 ]]; then
+        expected="wipe-keybase"
+    fi
+    read -r -p "Type '$expected' to proceed: " ans
+    if [[ "$ans" != "$expected" ]]; then
         echo "Aborted."
         exit 1
     fi
+fi
+
+if [[ $KEYBASE_ONLY -eq 1 ]]; then
+    remove_keybase
+    echo ""
+    echo "Keybase-only uninstall complete."
+    exit 0
 fi
 
 # ── 1. Stop and disable services + timers ───────────────────────────────────
@@ -133,7 +251,12 @@ rm -f  /etc/sudoers.d/nft-firewall
 rm -f  /usr/local/bin/fw
 rm -f  /usr/local/bin/fix-cosmos-perms
 rm -f  /usr/local/bin/nft-keybase-notify
+rm -f  /etc/sudoers.d/nft-firewall-keybase-fix
 rm -rf /usr/local/lib/nft-firewall
+
+if [[ $REMOVE_KEYBASE -eq 1 ]]; then
+    remove_keybase
+fi
 
 # ── 5. Remove users created by setup ────────────────────────────────────────
 
@@ -171,6 +294,7 @@ for d in /opt/nft-firewall /opt/cosmos /var/lib/nft-firewall /var/lib/cosmos \
 done
 
 for f in /etc/sudoers.d/nft-firewall /etc/nft-watchdog.conf \
+         /etc/sudoers.d/nft-firewall-keybase-fix \
          /usr/local/bin/fw /usr/local/bin/fix-cosmos-perms \
          /usr/local/bin/nft-keybase-notify; do
     if [[ -e "$f" ]]; then
@@ -202,11 +326,14 @@ if (( LEFTOVERS == 0 )); then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Uninstall complete — system is clean."
     echo "  /etc/wireguard/ left untouched (your VPN keys are safe)."
+    if [[ $REMOVE_KEYBASE -eq 0 ]]; then
+        echo "  Keybase package/account data left untouched."
+    else
+        echo "  Keybase package/account data removed."
+    fi
     echo ""
     echo "  Reinstall with the bootstrap one-liner:"
-    echo "    rm -f setup.sh && wget -qO setup.sh \\"
-    echo "      \"https://raw.githubusercontent.com/unknown0152/nft-firewall/main/setup.sh?v=\$(date +%s)\" \\"
-    echo "      && sudo bash setup.sh"
+    echo "    curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     exit 0
 else

@@ -41,6 +41,9 @@
 
 ### Added
 
+- Added curl-accessible uninstall modes: `--uninstall`, `--uninstall --with-keybase`,
+  and `--keybase-only`. Normal uninstall preserves Keybase; Keybase package and
+  local account state are removed only when explicitly requested.
 - Added guided installer modes for update-only, core firewall, Cosmos/media,
   full server, and full server with interactive Keybase login.
 - Added smarter Keybase preparation during install/update: the installer starts

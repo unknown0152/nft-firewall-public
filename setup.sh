@@ -23,10 +23,26 @@ PROFILE=""
 MODE_SELECTED=0
 ADVANCED_SELECTED=0
 UPDATE_ONLY=0
+UNINSTALL=0
+UNINSTALL_KEYBASE=0
+KEYBASE_ONLY=0
+ASSUME_YES=0
 
 while [[ "$#" -gt 0 ]]; do
     arg="$1"
     case "$arg" in
+        --uninstall|--remove)
+            MODE_SELECTED=1
+            UNINSTALL=1
+            ;;
+        --keybase-only)
+            MODE_SELECTED=1
+            KEYBASE_ONLY=1
+            UNINSTALL_KEYBASE=1
+            ;;
+        -y|--yes)
+            ASSUME_YES=1
+            ;;
         --update|--upgrade)
             MODE_SELECTED=1
             UPDATE_ONLY=1
@@ -74,6 +90,9 @@ while [[ "$#" -gt 0 ]]; do
             ADVANCED_SELECTED=1
             RUN_INTEGRATIONS=1
             INSTALL_KEYBASE=1
+            if [[ "$UNINSTALL" -eq 1 ]]; then
+                UNINSTALL_KEYBASE=1
+            fi
             ;;
         --with-keybase-login)
             ADVANCED_SELECTED=1
@@ -115,6 +134,11 @@ Default behavior:
   In non-interactive shells, it falls back to --core.
 
 Simple modes:
+  --uninstall   remove nft-firewall/Cosmos install; preserve WireGuard and packages
+  --uninstall --with-keybase
+                also purge Keybase package and local Keybase state
+  --keybase-only
+                only purge Keybase package and local Keybase state
   --update      update existing nft-firewall install; no config wizard
   --core        core firewall only (default)
   --cosmos      core + Cosmos/media hardening + Docker + web dashboard
@@ -139,6 +163,8 @@ Examples:
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update --with-keybase-login
+  curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --uninstall
+  curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --uninstall --with-keybase
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --cosmos
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login
 USAGE
@@ -243,7 +269,10 @@ guided_install_mode() {
 }
 
 guided_install_mode
-echo "[+] Mode: update=$UPDATE_ONLY integrations=$RUN_INTEGRATIONS docker=$INSTALL_DOCKER keybase=$INSTALL_KEYBASE keybase_login=$KEYBASE_LOGIN webui=$ENABLE_WEBUI validate=$RUN_VALIDATE safe_apply=$RUN_SAFE_APPLY"
+if [[ "$UNINSTALL" -eq 1 && "$INSTALL_KEYBASE" -eq 1 ]]; then
+    UNINSTALL_KEYBASE=1
+fi
+echo "[+] Mode: uninstall=$UNINSTALL keybase_only=$KEYBASE_ONLY update=$UPDATE_ONLY integrations=$RUN_INTEGRATIONS docker=$INSTALL_DOCKER keybase=$INSTALL_KEYBASE keybase_login=$KEYBASE_LOGIN webui=$ENABLE_WEBUI validate=$RUN_VALIDATE safe_apply=$RUN_SAFE_APPLY"
 
 # 1. Install mandatory system packages if missing
 echo "[+] Updating package cache and installing mandatory tools..."
@@ -300,6 +329,21 @@ fi
 # 4. Run the full installer logic
 cd "$INSTALL_TMP"
 chmod +x scripts/safe-nft-apply.sh # Ensure internal scripts are ready
+
+if [[ "$UNINSTALL" -eq 1 || "$KEYBASE_ONLY" -eq 1 ]]; then
+    uninstall_args=()
+    if [[ "$ASSUME_YES" -eq 1 ]]; then
+        uninstall_args+=(--yes)
+    fi
+    if [[ "$KEYBASE_ONLY" -eq 1 ]]; then
+        uninstall_args+=(--keybase-only)
+    elif [[ "$UNINSTALL_KEYBASE" -eq 1 ]]; then
+        uninstall_args+=(--with-keybase)
+    fi
+    echo "[+] Running uninstall: scripts/uninstall.sh ${uninstall_args[*]}"
+    bash scripts/uninstall.sh "${uninstall_args[@]}"
+    exit $?
+fi
 
 if [[ "$UPDATE_ONLY" -eq 1 && -f /opt/nft-firewall/config/firewall.ini ]]; then
     echo "[+] Preserving existing firewall.ini for update-only run..."

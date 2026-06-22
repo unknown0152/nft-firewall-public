@@ -39,6 +39,29 @@ def test_fw_wrapper_blocks_plain_apply():
     assert "use 'fw safe-apply <profile>'" in text
 
 
+def test_setup_sh_exposes_curl_uninstall_modes():
+    setup_sh = Path(__file__).resolve().parent.parent.parent / "setup.sh"
+    text = setup_sh.read_text()
+
+    assert "--uninstall" in text
+    assert "--keybase-only" in text
+    assert "bash scripts/uninstall.sh" in text
+    assert "uninstall_args+=(--with-keybase)" in text
+    assert "uninstall_args+=(--keybase-only)" in text
+
+
+def test_uninstall_script_keeps_keybase_opt_in():
+    uninstall_sh = Path(__file__).resolve().parent.parent.parent / "scripts" / "uninstall.sh"
+    text = uninstall_sh.read_text()
+
+    assert "--with-keybase" in text
+    assert "--keybase-only" in text
+    assert "REMOVE_KEYBASE=0" in text
+    assert "apt-get purge -y keybase" in text
+    assert "Keybase package/account data left untouched" in text
+    assert "Type '$expected' to proceed" in text
+
+
 def test_keybase_wrapper_sets_login_like_environment():
     setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
     text = setup_py.read_text()
