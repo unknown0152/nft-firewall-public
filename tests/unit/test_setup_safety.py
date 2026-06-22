@@ -652,6 +652,8 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert "ADVANCED_SELECTED=0" in text
     assert "UPDATE_ONLY=0" in text
     assert "--update|--upgrade)" in text
+    assert 'return 0' in text
+    assert '[[ "$MODE_SELECTED" -ne 0 || "$ADVANCED_SELECTED" -ne 0 || ! -r /dev/tty ]]' in text
     assert "Existing nft-firewall install detected." in text
     assert "Update only (code, wrappers, units, restart, validate)" in text
     assert "Running update-only installation" in text

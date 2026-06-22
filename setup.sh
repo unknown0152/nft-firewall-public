@@ -186,7 +186,9 @@ configure_mode() {
 }
 
 guided_install_mode() {
-    [[ "$MODE_SELECTED" -eq 0 && "$ADVANCED_SELECTED" -eq 0 && -r /dev/tty ]] || return
+    if [[ "$MODE_SELECTED" -ne 0 || "$ADVANCED_SELECTED" -ne 0 || ! -r /dev/tty ]]; then
+        return 0
+    fi
 
     echo ""
     if [[ -d /opt/nft-firewall && -f /opt/nft-firewall/config/firewall.ini ]]; then
