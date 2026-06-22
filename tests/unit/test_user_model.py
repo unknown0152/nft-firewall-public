@@ -89,12 +89,40 @@ def test_existing_users_are_normalized_to_expected_home_and_shell(monkeypatch):
         "_run",
         lambda cmd, **_kw: calls.append(cmd) or SimpleNamespace(returncode=0, stderr=""),
     )
+    monkeypatch.setattr(setup, "_user_has_processes", lambda _name: False)
     monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
 
     setup._ensure_user("fw-admin", system=True, home=setup.SYSTEM_HOME, shell="/bin/false")
 
     assert ["usermod", "--home", str(setup.SYSTEM_HOME), "fw-admin"] in calls
     assert ["usermod", "--shell", "/bin/false", "fw-admin"] in calls
+
+
+def test_existing_active_user_skips_home_and_shell_normalization(monkeypatch):
+    import setup
+
+    calls = []
+    infos = []
+    monkeypatch.setattr(setup, "_user_exists", lambda _name: True)
+    monkeypatch.setattr(
+        setup.pwd,
+        "getpwnam",
+        lambda name: SimpleNamespace(pw_uid=999, pw_dir="/home/fw-admin", pw_shell="/bin/sh"),
+    )
+    monkeypatch.setattr(
+        setup,
+        "_run",
+        lambda cmd, **_kw: calls.append(cmd) or SimpleNamespace(returncode=0, stderr=""),
+    )
+    monkeypatch.setattr(setup, "_user_has_processes", lambda _name: True)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_info", lambda msg, *a, **kw: infos.append(msg))
+
+    setup._ensure_user("fw-admin", system=True, home=setup.SYSTEM_HOME, shell="/bin/false")
+
+    assert not any(call[:1] == ["usermod"] for call in calls)
+    assert any("home is /home/fw-admin" in msg for msg in infos)
+    assert any("shell is /bin/sh" in msg for msg in infos)
 
 
 def test_sudoers_uses_fw_admin_and_not_legacy_nft_firewall(monkeypatch, tmp_path):

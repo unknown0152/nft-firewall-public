@@ -227,6 +227,15 @@ def _ensure_supplementary_group(user: str, group: str) -> None:
     _ok(f"Added '{user}' to group '{group}'")
 
 
+def _user_has_processes(user: str) -> bool:
+    r = _run(["pgrep", "-u", user], check=False)
+    return r.returncode == 0
+
+
+def _user_busy_message(stderr: str) -> bool:
+    return "currently used by process" in stderr.lower()
+
+
 def _remove_supplementary_group(user: str, group: str) -> None:
     if not _user_exists(user) or not _group_exists(group):
         return
@@ -244,17 +253,31 @@ def _ensure_user(name: str, *, system: bool, home: Optional[Path], shell: str) -
         pw = pwd.getpwnam(name)
         _ok(f"User '{name}' already exists (uid={pw.pw_uid}, shell={pw.pw_shell})")
         if home is not None and pw.pw_dir != str(home):
-            r = _run(["usermod", "--home", str(home), name], check=False)
-            if r.returncode != 0:
-                _warn(f"Could not set home for '{name}' to {home}: {r.stderr.strip()}")
+            if _user_has_processes(name):
+                _info(f"'{name}' home is {pw.pw_dir}; leaving it unchanged while services are running")
             else:
-                _ok(f"Set '{name}' home to {home}")
+                r = _run(["usermod", "--home", str(home), name], check=False)
+                if r.returncode != 0:
+                    detail = r.stderr.strip()
+                    if _user_busy_message(detail):
+                        _info(f"'{name}' home is {pw.pw_dir}; leaving it unchanged while services are running")
+                    else:
+                        _warn(f"Could not set home for '{name}' to {home}: {detail}")
+                else:
+                    _ok(f"Set '{name}' home to {home}")
         if shell and pw.pw_shell != shell:
-            r = _run(["usermod", "--shell", shell, name], check=False)
-            if r.returncode != 0:
-                _warn(f"Could not set shell for '{name}' to {shell}: {r.stderr.strip()}")
+            if _user_has_processes(name):
+                _info(f"'{name}' shell is {pw.pw_shell}; leaving it unchanged while services are running")
             else:
-                _ok(f"Set '{name}' shell to {shell}")
+                r = _run(["usermod", "--shell", shell, name], check=False)
+                if r.returncode != 0:
+                    detail = r.stderr.strip()
+                    if _user_busy_message(detail):
+                        _info(f"'{name}' shell is {pw.pw_shell}; leaving it unchanged while services are running")
+                    else:
+                        _warn(f"Could not set shell for '{name}' to {shell}: {detail}")
+                else:
+                    _ok(f"Set '{name}' shell to {shell}")
         return
 
     cmd = ["useradd", "--user-group", "--shell", shell]
@@ -968,6 +991,19 @@ def _install_keybase_wrapper(kb_user: str) -> None:
     _ok(f"Installed {wrapper}  (login user={kb_user or 'UNCONFIGURED'}, home={kb_home}, uid={kb_uid})")
 
 
+def _keybase_failure_summary(detail: str, linux_user: str) -> str:
+    normalized = detail.lower()
+    if "login required" in normalized or "logged out" in normalized:
+        return f"Keybase login is required for {linux_user}"
+    if "failed to reach user-level systemd daemon" in normalized:
+        return f"Keybase user session is not reachable for {linux_user}"
+    if "keybased.sock" in normalized or "connect: no such file" in normalized:
+        return f"Keybase service/socket is not running for {linux_user}"
+    if "resource temporarily unavailable" in normalized:
+        return f"Keybase local storage is temporarily locked for {linux_user}"
+    return f"Keybase wrapper cannot access a logged-in session for {linux_user}"
+
+
 def _read_install_config() -> configparser.ConfigParser:
     """Load the installed or local firewall.ini for installer decisions."""
     cfg = configparser.ConfigParser()
@@ -1043,11 +1079,8 @@ def _keybase_chatops_ready() -> bool:
     )
     if result.returncode != 0 or not result.stdout.strip():
         detail = (result.stderr or result.stdout or "").strip()
-        _warn(
-            "Skipping Keybase services: Keybase wrapper cannot access a logged-in "
-            f"session for {linux_user}"
-        )
-        if detail:
+        _warn(f"Skipping Keybase services: {_keybase_failure_summary(detail, linux_user)}")
+        if detail and os.environ.get("NFT_FIREWALL_DEBUG") == "1":
             _warn(detail)
         _warn(f"Repair with: sudo -iu {linux_user} run_keybase -g && sudo -iu {linux_user} keybase login")
         return False

@@ -416,13 +416,22 @@ def test_keybase_chatops_ready_rejects_logged_out_wrapper(monkeypatch, tmp_path)
     monkeypatch.setattr(
         setup.subprocess,
         "run",
-        lambda cmd, **kwargs: _subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Login required"),
+        lambda cmd, **kwargs: _subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="",
+            stderr=(
+                "Failed to reach user-level systemd daemon.\n"
+                "dial unix /home/botuser/.config/keybase/keybased.sock: connect: no such file or directory"
+            ),
+        ),
     )
     monkeypatch.setattr(setup, "_warn", lambda msg, *a, **kw: warnings.append(msg))
 
     assert not setup._keybase_chatops_ready()
-    assert any("wrapper cannot access" in msg for msg in warnings)
-    assert any("Login required" in msg for msg in warnings)
+    assert any("Keybase user session is not reachable for botuser" in msg for msg in warnings)
+    assert any("Repair with: sudo -iu botuser run_keybase -g" in msg for msg in warnings)
+    assert not any("dial unix" in msg for msg in warnings)
 
 
 def test_preflight_passes_on_valid_ruleset(monkeypatch, tmp_path):
