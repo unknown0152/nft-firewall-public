@@ -55,6 +55,25 @@ def test_keybase_wrapper_sets_login_like_environment():
     assert 'runuser -l "$kb_user"' not in text
 
 
+def test_keybase_one_off_repair_uses_generic_runtime_wrapper():
+    script = (
+        Path(__file__).resolve().parent.parent.parent
+        / "scripts"
+        / "fix-keybase-wrapper.sh"
+    )
+    text = script.read_text()
+
+    assert 'Path("/opt/nft-firewall/config/firewall.ini")' in text
+    assert 'cfg.get("keybase", "linux_user", fallback="").strip()' in text
+    assert 'NFT_FIREWALL_KEYBASE_USER' in text
+    assert 'NFT_FIREWALL_SYSTEM_USER' in text
+    assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' in text
+    assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"' in text
+    assert 'exec "$runuser_bin" -u "$kb_user" -- env' in text
+    assert '/usr/bin/keybase "$@"' in text
+    assert 'runuser -l "$kb_user"' not in text
+
+
 def test_firewall_threatfeed_service_uses_real_cli_command():
     service = (
         Path(__file__).resolve().parent.parent.parent
