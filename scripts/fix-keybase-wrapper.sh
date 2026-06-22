@@ -213,6 +213,12 @@ if "$wrapper" whoami; then
   ok "Wrapper can see the logged-in Keybase account"
 else
   warn "Wrapper still cannot see a logged-in Keybase account"
+  direct_whoami="$(sudo -iu "$keybase_user" keybase whoami 2>/dev/null || true)"
+  if [[ -n "$direct_whoami" ]]; then
+    warn "Direct login context works as $direct_whoami, but wrapper path failed"
+  else
+    warn "Direct login context is also logged out"
+  fi
   warn "Try: sudo -iu $keybase_user run_keybase -g && sudo -iu $keybase_user keybase login"
   exit 1
 fi

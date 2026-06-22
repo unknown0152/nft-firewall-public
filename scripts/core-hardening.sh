@@ -337,6 +337,13 @@ maybe_run_keybase_login() {
   echo "    Then re-run setup.py --reconfigure if [keybase] was left blank."
 }
 
+keybase_wrapper_whoami() {
+  local kb_user="$1"
+  [[ -n "$kb_user" ]] || return 1
+  [[ -x /usr/local/bin/nft-keybase-notify ]] || return 1
+  NFT_FIREWALL_KEYBASE_USER="$kb_user" /usr/local/bin/nft-keybase-notify whoami 2>/dev/null
+}
+
 keybase_config_ready() {
   python3 - <<'PY'
 import configparser
@@ -362,10 +369,21 @@ enable_keybase_units_if_ready() {
   fi
 
   kb_user="$(detect_keybase_linux_user || true)"
-  if [[ -z "$kb_user" ]] || [[ -z "$(sudo -iu "$kb_user" keybase whoami 2>/dev/null || true)" ]]; then
-    echo "[!] Keybase is not logged in; nft-listener and daily report timer not enabled."
+  if [[ -z "$kb_user" ]] || ! id "$kb_user" >/dev/null 2>&1; then
+    echo "[!] Keybase Linux user is missing; nft-listener and daily report timer not enabled."
     return
   fi
+
+  whoami_out="$(keybase_wrapper_whoami "$kb_user" || true)"
+  if [[ -z "$whoami_out" ]]; then
+    echo "[!] Keybase wrapper cannot access a logged-in session; nft-listener and daily report timer not enabled."
+    echo "    Repair:"
+    echo "      sudo -iu $kb_user run_keybase -g"
+    echo "      sudo -iu $kb_user keybase login"
+    echo "      /usr/local/bin/nft-keybase-notify whoami"
+    return
+  fi
+  echo "[ok] Keybase wrapper logged in as $whoami_out"
 
   echo "[+] Enabling Keybase-backed nft-firewall units..."
   systemctl daemon-reload

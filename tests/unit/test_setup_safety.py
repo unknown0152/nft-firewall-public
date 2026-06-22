@@ -361,6 +361,70 @@ def test_step6_starts_optional_services_when_runtime_prereqs_exist(monkeypatch):
     assert ["systemctl", "restart", "nft-daily-report.timer"] in calls
 
 
+def test_keybase_chatops_ready_requires_working_wrapper(monkeypatch, tmp_path):
+    import configparser
+    import setup
+    import subprocess as _subprocess
+
+    cfg = configparser.ConfigParser()
+    cfg["keybase"] = {
+        "linux_user": "botuser",
+        "target_user": "botaccount",
+        "team": "ops",
+    }
+    wrapper = tmp_path / "nft-keybase-notify"
+    wrapper.write_text("#!/bin/sh\n")
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return _subprocess.CompletedProcess(cmd, 0, stdout="botaccount\n", stderr="")
+
+    monkeypatch.setattr(setup, "_read_install_config", lambda: cfg)
+    monkeypatch.setattr(setup.shutil, "which", lambda cmd: "/usr/bin/keybase" if cmd == "keybase" else None)
+    monkeypatch.setattr(setup.pwd, "getpwnam", lambda user: object())
+    monkeypatch.setattr(setup, "KEYBASE_WRAPPER", wrapper)
+    monkeypatch.setattr(setup.subprocess, "run", fake_run)
+    monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
+
+    assert setup._keybase_chatops_ready()
+    assert calls[0][0] == [str(wrapper), "whoami"]
+    assert calls[0][1]["env"]["NFT_FIREWALL_KEYBASE_USER"] == "botuser"
+
+
+def test_keybase_chatops_ready_rejects_logged_out_wrapper(monkeypatch, tmp_path):
+    import configparser
+    import setup
+    import subprocess as _subprocess
+
+    cfg = configparser.ConfigParser()
+    cfg["keybase"] = {
+        "linux_user": "botuser",
+        "target_user": "botaccount",
+        "team": "ops",
+    }
+    wrapper = tmp_path / "nft-keybase-notify"
+    wrapper.write_text("#!/bin/sh\n")
+    warnings = []
+
+    monkeypatch.setattr(setup, "_read_install_config", lambda: cfg)
+    monkeypatch.setattr(setup.shutil, "which", lambda cmd: "/usr/bin/keybase" if cmd == "keybase" else None)
+    monkeypatch.setattr(setup.pwd, "getpwnam", lambda user: object())
+    monkeypatch.setattr(setup, "KEYBASE_WRAPPER", wrapper)
+    monkeypatch.setattr(
+        setup.subprocess,
+        "run",
+        lambda cmd, **kwargs: _subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Login required"),
+    )
+    monkeypatch.setattr(setup, "_warn", lambda msg, *a, **kw: warnings.append(msg))
+
+    assert not setup._keybase_chatops_ready()
+    assert any("wrapper cannot access" in msg for msg in warnings)
+    assert any("Login required" in msg for msg in warnings)
+
+
 def test_preflight_passes_on_valid_ruleset(monkeypatch, tmp_path):
     import setup
     import subprocess as _subprocess
@@ -649,6 +713,8 @@ def test_core_hardening_can_install_keybase_explicitly():
     assert "install_keybase_package" in text
     assert "detect_keybase_linux_user" in text
     assert "maybe_run_keybase_login" in text
+    assert "keybase_wrapper_whoami" in text
+    assert 'NFT_FIREWALL_KEYBASE_USER="$kb_user" /usr/local/bin/nft-keybase-notify whoami' in text
     assert "enable_keybase_units_if_ready" in text
     assert "keybase_config_ready" in text
     assert "https://prerelease.keybase.io/keybase_amd64.deb" in text

@@ -78,6 +78,7 @@ SYSTEMD_SRC        = Path(__file__).resolve().parent / "systemd"
 PYTHON_BIN         = "/usr/bin/python3"
 FW_BIN             = Path("/usr/local/bin/fw")
 WRAPPER_DIR        = Path("/usr/local/lib/nft-firewall")
+KEYBASE_WRAPPER    = Path("/usr/local/bin/nft-keybase-notify")
 FIREWALL_DIRS      = (INSTALL_DIR, LIB_DIR, LOG_DIR, ETC_DIR)
 
 # Long-running daemons (restarted on every install)
@@ -815,13 +816,13 @@ def step4_install_sudoers() -> None:
     if keybase_user:
         fragment_lines += [
             "# Keybase notifications — wrapper opens a login session for the Keybase account",
-            f"{SYSTEM_USER} ALL=(root) NOPASSWD: /usr/local/bin/nft-keybase-notify",
+            f"{SYSTEM_USER} ALL=(root) NOPASSWD: {KEYBASE_WRAPPER}",
             "",
         ]
     else:
         fragment_lines += [
             "# Keybase linux_user not detected in firewall.ini — add manually if needed:",
-            f"# {SYSTEM_USER} ALL=(root) NOPASSWD: /usr/local/bin/nft-keybase-notify",
+            f"# {SYSTEM_USER} ALL=(root) NOPASSWD: {KEYBASE_WRAPPER}",
             "",
         ]
 
@@ -872,12 +873,12 @@ def _read_keybase_user() -> str:
 def _install_keybase_wrapper(kb_user: str) -> None:
     """Write /usr/local/bin/nft-keybase-notify — the sudoers-safe Keybase wrapper.
 
-    The wrapper is executed as root via a pinned sudoers rule, then uses
-    runuser without a login shell while preserving the configured user's
-    runtime environment. Keybase on Debian stores its active socket under
-    /run/user/<uid>/keybase; a login-shell runuser path can miss that socket.
+    The wrapper is executed as root via a pinned sudoers rule, then opens the
+    configured user's login context with sudo -iu. That matches the manual
+    Keybase command operators already use (sudo -iu <user> keybase whoami) and
+    avoids split sessions where the service appears logged out from automation.
     """
-    wrapper = Path("/usr/local/bin/nft-keybase-notify")
+    wrapper = KEYBASE_WRAPPER
 
     if kb_user:
         try:
@@ -1006,13 +1007,51 @@ def _wireguard_runtime_ready() -> bool:
 def _keybase_chatops_ready() -> bool:
     """Return True when Keybase-dependent services can start during install."""
     cfg = _read_install_config()
+    linux_user = cfg.get("keybase", "linux_user", fallback="").strip()
     target_user = cfg.get("keybase", "target_user", fallback="").strip()
+    team = cfg.get("keybase", "team", fallback="").strip()
     if not target_user or target_user == "your-keybase-username":
         _warn("Skipping Keybase services: keybase.target_user is not configured")
+        return False
+    if not team and not target_user:
+        _warn("Skipping Keybase services: no Keybase team or target_user is configured")
+        return False
+    if not linux_user:
+        _warn("Skipping Keybase services: keybase.linux_user is not configured")
+        return False
+    try:
+        pwd.getpwnam(linux_user)
+    except KeyError:
+        _warn(f"Skipping Keybase services: keybase.linux_user does not exist: {linux_user}")
         return False
     if shutil.which("keybase") is None:
         _warn("Skipping Keybase services: keybase command is missing")
         return False
+    wrapper = KEYBASE_WRAPPER
+    if not wrapper.exists():
+        _warn(f"Skipping Keybase services: {wrapper} is missing")
+        return False
+
+    env = os.environ.copy()
+    env["NFT_FIREWALL_KEYBASE_USER"] = linux_user
+    result = subprocess.run(
+        [str(wrapper), "whoami"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        detail = (result.stderr or result.stdout or "").strip()
+        _warn(
+            "Skipping Keybase services: Keybase wrapper cannot access a logged-in "
+            f"session for {linux_user}"
+        )
+        if detail:
+            _warn(detail)
+        _warn(f"Repair with: sudo -iu {linux_user} run_keybase -g && sudo -iu {linux_user} keybase login")
+        return False
+    _ok(f"Keybase wrapper logged in as {result.stdout.strip()}")
     return True
 
 
