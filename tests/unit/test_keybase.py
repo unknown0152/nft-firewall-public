@@ -92,6 +92,8 @@ def test_upload_file_uses_team_channel_upload(monkeypatch, tmp_path):
 
     def fake_run(cmd, **_kwargs):
         calls.append(cmd)
+        if cmd[-1] == "whoami":
+            return MagicMock(returncode=0, stdout="botaccount\n", stderr="")
         return MagicMock(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(keybase.subprocess, "run", fake_run)
@@ -99,6 +101,10 @@ def test_upload_file_uses_team_channel_upload(monkeypatch, tmp_path):
     assert keybase.upload_file(attachment, title="Daily Report", tags="shield")
 
     assert calls == [[
+        "sudo",
+        "/usr/local/bin/nft-keybase-notify",
+        "whoami",
+    ], [
         "sudo",
         "/usr/local/bin/nft-keybase-notify",
         "chat",
@@ -110,3 +116,61 @@ def test_upload_file_uses_team_channel_upload(monkeypatch, tmp_path):
         "ops",
         str(attachment),
     ]]
+
+
+def test_notify_preflights_wrapper_before_channel_and_send(monkeypatch, capsys):
+    cfg = keybase.configparser.ConfigParser()
+    cfg["keybase"] = {
+        "team": "ops",
+        "channel": "general",
+        "linux_user": "botuser",
+        "target_user": "botaccount",
+    }
+    monkeypatch.setattr(keybase, "_load_config", lambda: cfg)
+    monkeypatch.setattr(keybase, "_detect_linux_user", lambda _cfg: "botuser")
+    monkeypatch.setattr(keybase.pwd, "getpwnam", lambda _user: object())
+
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if cmd[-1] == "whoami":
+            return MagicMock(returncode=1, stdout="", stderr="Login required")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(keybase.subprocess, "run", fake_run)
+
+    assert not keybase.notify("NFT Firewall - test", "body")
+    assert calls == [["sudo", "/usr/local/bin/nft-keybase-notify", "whoami"]]
+
+    out = capsys.readouterr().out
+    assert "wrapper cannot access a logged-in Keybase session" in out
+    assert "sudo -iu botuser keybase login" in out
+
+
+def test_notify_sends_after_wrapper_identity_check(monkeypatch):
+    cfg = keybase.configparser.ConfigParser()
+    cfg["keybase"] = {
+        "team": "ops",
+        "channel": "general",
+        "linux_user": "botuser",
+        "target_user": "botaccount",
+    }
+    monkeypatch.setattr(keybase, "_load_config", lambda: cfg)
+    monkeypatch.setattr(keybase, "_detect_linux_user", lambda _cfg: "botuser")
+    monkeypatch.setattr(keybase.pwd, "getpwnam", lambda _user: object())
+    monkeypatch.setattr(keybase, "_ensure_team_channels", lambda *_args, **_kwargs: None)
+
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if cmd[-1] == "whoami":
+            return MagicMock(returncode=0, stdout="botaccount\n", stderr="")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(keybase.subprocess, "run", fake_run)
+
+    assert keybase.notify("NFT Firewall - test", "body")
+    assert calls[0] == ["sudo", "/usr/local/bin/nft-keybase-notify", "whoami"]
+    assert calls[1][:5] == ["sudo", "/usr/local/bin/nft-keybase-notify", "chat", "send", "--channel"]

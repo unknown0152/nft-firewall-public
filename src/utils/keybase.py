@@ -211,6 +211,30 @@ def _ensure_team_channels(sudo_prefix: Sequence[str], team: str, default_channel
             print(f"[keybase] WARNING: cannot create {team}#{channel}: {created.stderr.strip()}")
 
 
+def _wrapper_whoami_ready(sudo_prefix: Sequence[str], kb_user: str) -> bool:
+    """Return True when the sudoers-safe wrapper can see a logged-in Keybase user."""
+    cmd = [*sudo_prefix, "whoami"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except Exception as exc:
+        print(f"[keybase] WARNING: wrapper identity check failed: {exc}")
+        return False
+
+    whoami = result.stdout.strip()
+    if result.returncode == 0 and whoami:
+        return True
+
+    detail = (result.stderr or result.stdout or "").strip()
+    print(f"[keybase] WARNING: wrapper cannot access a logged-in Keybase session for Linux user '{kb_user}'")
+    if detail:
+        print(f"[keybase] WARNING: {detail}")
+    print("[keybase] Repair:")
+    print(f"  sudo -iu {kb_user} run_keybase -g")
+    print(f"  sudo -iu {kb_user} keybase login")
+    print("  /usr/local/bin/nft-keybase-notify whoami")
+    return False
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def notify(title: str, body: str, tags: str = "", priority: str = "default") -> bool:
@@ -242,9 +266,7 @@ def notify(title: str, body: str, tags: str = "", priority: str = "default") -> 
 
     kb_user = _detect_linux_user(cfg)
     try:
-        pw     = pwd.getpwnam(kb_user)
-        kb_uid  = pw.pw_uid
-        kb_home = pw.pw_dir
+        pwd.getpwnam(kb_user)
     except KeyError:
         print(f"[keybase] WARNING: cannot look up Linux user '{kb_user}'")
         return False
@@ -252,6 +274,8 @@ def notify(title: str, body: str, tags: str = "", priority: str = "default") -> 
     # Use a root-owned wrapper script so sudo can match one exact command path.
     # The wrapper opens a login session for the configured Keybase Linux user.
     sudo_prefix = ["sudo", "/usr/local/bin/nft-keybase-notify"]
+    if not _wrapper_whoami_ready(sudo_prefix, kb_user):
+        return False
 
     if team:
         _ensure_team_channels(sudo_prefix, team, default_channel)
@@ -308,6 +332,8 @@ def upload_file(
         return False
 
     sudo_prefix = ["sudo", "/usr/local/bin/nft-keybase-notify"]
+    if not _wrapper_whoami_ready(sudo_prefix, kb_user):
+        return False
 
     if team:
         _ensure_team_channels(sudo_prefix, team, default_channel)
