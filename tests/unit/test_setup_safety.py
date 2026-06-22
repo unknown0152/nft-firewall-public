@@ -42,7 +42,11 @@ def test_keybase_wrapper_sets_login_like_environment():
     setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
     text = setup_py.read_text()
 
-    assert 'kb_user="{kb_user or ""}"' in text
+    assert 'default_kb_user="{kb_user or ""}"' in text
+    assert 'Path("/opt/nft-firewall/config/firewall.ini")' in text
+    assert 'cfg.get("keybase", "linux_user", fallback="").strip()' in text
+    assert 'kb_user="${NFT_FIREWALL_KEYBASE_USER:-${config_kb_user:-$default_kb_user}}"' in text
+    assert 'Keybase linux_user does not exist: $kb_user' in text
     assert 'kb_uid="$(id -u "$kb_user")"' in text
     assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' in text
     assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"' in text

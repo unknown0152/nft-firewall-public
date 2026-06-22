@@ -897,9 +897,33 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         "set -euo pipefail\n"
         "# Wrapper installed by nft-firewall setup.py\n"
         "# Allows fw-admin to invoke keybase through a root-owned, exact sudo rule.\n"
-        f'kb_user="{kb_user or ""}"\n'
+        f'default_kb_user="{kb_user or ""}"\n'
+        'config_kb_user="$(/usr/bin/python3 - <<\'PY\' 2>/dev/null || true\n'
+        'import configparser\n'
+        'from pathlib import Path\n'
+        'for path in (\n'
+        '    Path("/opt/nft-firewall/config/firewall.ini"),\n'
+        '    Path("/etc/nft-firewall/firewall.ini"),\n'
+        '    Path("/etc/nft-watchdog.conf"),\n'
+        '):\n'
+        '    cfg = configparser.ConfigParser()\n'
+        '    try:\n'
+        '        cfg.read(path)\n'
+        '    except Exception:\n'
+        '        continue\n'
+        '    user = cfg.get("keybase", "linux_user", fallback="").strip()\n'
+        '    if user:\n'
+        '        print(user)\n'
+        '        break\n'
+        'PY\n'
+        ')"\n'
+        'kb_user="${NFT_FIREWALL_KEYBASE_USER:-${config_kb_user:-$default_kb_user}}"\n'
         'if [[ -z "$kb_user" ]]; then\n'
         '  echo "Keybase linux_user is not configured" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        'if ! getent passwd "$kb_user" >/dev/null; then\n'
+        '  echo "Keybase linux_user does not exist: $kb_user" >&2\n'
         "  exit 1\n"
         "fi\n"
         'kb_uid="$(id -u "$kb_user")"\n'
