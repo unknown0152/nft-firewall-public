@@ -276,6 +276,12 @@ git clone -q "$REPO_URL" "$INSTALL_TMP"
 cd "$INSTALL_TMP"
 chmod +x scripts/safe-nft-apply.sh # Ensure internal scripts are ready
 
+if [[ "$UPDATE_ONLY" -eq 1 && -f /opt/nft-firewall/config/firewall.ini ]]; then
+    echo "[+] Preserving existing firewall.ini for update-only run..."
+    mkdir -p config
+    cp -f /opt/nft-firewall/config/firewall.ini config/firewall.ini
+fi
+
 # We run setup.py directly for the core firewall install
 if [[ "$UPDATE_ONLY" -eq 1 ]]; then
     echo "[+] Running update-only installation..."

@@ -656,6 +656,8 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert '[[ "$MODE_SELECTED" -ne 0 || "$ADVANCED_SELECTED" -ne 0 || ! -r /dev/tty ]]' in text
     assert "Existing nft-firewall install detected." in text
     assert "Update only (code, wrappers, units, restart, validate)" in text
+    assert "Preserving existing firewall.ini for update-only run" in text
+    assert "cp -f /opt/nft-firewall/config/firewall.ini config/firewall.ini" in text
     assert "Running update-only installation" in text
     assert 'if [[ "$UPDATE_ONLY" -eq 1 ]]' in text
     assert "guided_install_mode" in text
