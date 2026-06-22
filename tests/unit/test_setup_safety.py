@@ -648,6 +648,16 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert "KEYBASE_LOGIN=0" in text
     assert "RUN_VALIDATE=1" in text
     assert "RUN_SAFE_APPLY=0" in text
+    assert "MODE_SELECTED=0" in text
+    assert "ADVANCED_SELECTED=0" in text
+    assert "guided_install_mode" in text
+    assert "Choose install type:" in text
+    assert "Install type [1-4, default 2]" in text
+    assert "Run safe-apply after validation?" in text
+    assert "configure_mode core" in text
+    assert "configure_mode cosmos" in text
+    assert "configure_mode full" in text
+    assert "configure_mode full-login" in text
     assert "--core)" in text
     assert "--cosmos|--media|--media-server)" in text
     assert "--full)" in text

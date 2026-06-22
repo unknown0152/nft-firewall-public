@@ -55,36 +55,41 @@ Target: Debian 13 with systemd and console or out-of-band recovery access.
 Run this only after reviewing whether the default package and service changes
 fit the target host.
 
-Core firewall install. This is the default and runs post-install `fw doctor`
-and `fw simulate` automatically:
+Guided install. Paste one command, choose the install type, then the installer
+runs `fw doctor` and `fw simulate` automatically:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
 ```
 
-Cosmos/media server install. This adds optional Cosmos/media hardening, Docker
-Engine for Cosmos app management, and the read-only local dashboard for use
-behind Cosmos authentication:
+The guided menu offers:
+
+```text
+1) Core firewall only
+2) Cosmos/media server (Docker + dashboard)
+3) Full server (Cosmos + Docker + dashboard + Keybase package)
+4) Full server + interactive Keybase login
+```
+
+For automation, skip the menu with a mode flag:
 
 ```bash
+# Core firewall only
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --core
+
+# Cosmos/media server
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --cosmos
-```
 
-Full install. This adds Cosmos/media hardening, Docker, the dashboard, and the
-Keybase Linux package:
-
-```bash
+# Full server
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full
-```
 
-Full install with interactive Keybase login:
-
-```bash
+# Full server with interactive Keybase login
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login
 ```
 
-To apply firewall rules during the same run, add `--safe-apply`. This still uses
-safe mode and requires typing `CONFIRM`, so a bad SSH paste rolls back:
+To apply firewall rules during the same run, choose it in the guided installer
+or add `--safe-apply`. This still uses safe mode and requires typing `CONFIRM`,
+so a bad SSH paste rolls back:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login --safe-apply

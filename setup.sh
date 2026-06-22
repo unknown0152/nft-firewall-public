@@ -20,25 +20,31 @@ ENABLE_WEBUI=0
 RUN_VALIDATE=1
 RUN_SAFE_APPLY=0
 PROFILE=""
+MODE_SELECTED=0
+ADVANCED_SELECTED=0
 
 while [[ "$#" -gt 0 ]]; do
     arg="$1"
     case "$arg" in
         --core)
             # Explicit core-only mode. This is also the default.
+            MODE_SELECTED=1
             ;;
         --cosmos|--media|--media-server)
+            MODE_SELECTED=1
             RUN_INTEGRATIONS=1
             INSTALL_DOCKER=1
             ENABLE_WEBUI=1
             ;;
         --full)
+            MODE_SELECTED=1
             RUN_INTEGRATIONS=1
             INSTALL_DOCKER=1
             INSTALL_KEYBASE=1
             ENABLE_WEBUI=1
             ;;
         --full-login|--with-all)
+            MODE_SELECTED=1
             RUN_INTEGRATIONS=1
             INSTALL_DOCKER=1
             INSTALL_KEYBASE=1
@@ -46,22 +52,27 @@ while [[ "$#" -gt 0 ]]; do
             ENABLE_WEBUI=1
             ;;
         --with-integrations|--with-cosmos-keybase)
+            ADVANCED_SELECTED=1
             RUN_INTEGRATIONS=1
             ;;
         --with-docker)
+            ADVANCED_SELECTED=1
             RUN_INTEGRATIONS=1
             INSTALL_DOCKER=1
             ;;
         --with-keybase)
+            ADVANCED_SELECTED=1
             RUN_INTEGRATIONS=1
             INSTALL_KEYBASE=1
             ;;
         --with-keybase-login)
+            ADVANCED_SELECTED=1
             RUN_INTEGRATIONS=1
             INSTALL_KEYBASE=1
             KEYBASE_LOGIN=1
             ;;
         --with-webui)
+            ADVANCED_SELECTED=1
             ENABLE_WEBUI=1
             ;;
         --validate)
@@ -88,6 +99,10 @@ while [[ "$#" -gt 0 ]]; do
             cat <<'USAGE'
 Usage:
   sudo bash setup.sh [mode] [options]
+
+Default behavior:
+  With no mode flags and a TTY, this opens a guided installer.
+  In non-interactive shells, it falls back to --core.
 
 Simple modes:
   --core        core firewall only (default)
@@ -125,6 +140,75 @@ USAGE
 done
 
 echo "[+] NFT Firewall Bootstrapper"
+
+configure_mode() {
+    local mode="$1"
+    RUN_INTEGRATIONS=0
+    INSTALL_DOCKER=0
+    INSTALL_KEYBASE=0
+    KEYBASE_LOGIN=0
+    ENABLE_WEBUI=0
+
+    case "$mode" in
+        core)
+            ;;
+        cosmos)
+            RUN_INTEGRATIONS=1
+            INSTALL_DOCKER=1
+            ENABLE_WEBUI=1
+            ;;
+        full)
+            RUN_INTEGRATIONS=1
+            INSTALL_DOCKER=1
+            INSTALL_KEYBASE=1
+            ENABLE_WEBUI=1
+            ;;
+        full-login)
+            RUN_INTEGRATIONS=1
+            INSTALL_DOCKER=1
+            INSTALL_KEYBASE=1
+            KEYBASE_LOGIN=1
+            ENABLE_WEBUI=1
+            ;;
+    esac
+}
+
+guided_install_mode() {
+    [[ "$MODE_SELECTED" -eq 0 && "$ADVANCED_SELECTED" -eq 0 && -r /dev/tty ]] || return
+
+    echo ""
+    echo "Choose install type:"
+    echo "  1) Core firewall only"
+    echo "  2) Cosmos/media server (Docker + dashboard)"
+    echo "  3) Full server (Cosmos + Docker + dashboard + Keybase package)"
+    echo "  4) Full server + interactive Keybase login"
+    echo ""
+
+    local choice=""
+    while true; do
+        printf "Install type [1-4, default 2]: " > /dev/tty
+        read -r choice < /dev/tty || choice=""
+        choice="${choice:-2}"
+        case "$choice" in
+            1) configure_mode core; break ;;
+            2) configure_mode cosmos; break ;;
+            3) configure_mode full; break ;;
+            4) configure_mode full-login; break ;;
+            *) echo "Please enter 1, 2, 3, or 4." > /dev/tty ;;
+        esac
+    done
+
+    printf "Run safe-apply after validation? Type yes to enable [no]: " > /dev/tty
+    read -r apply_choice < /dev/tty || apply_choice=""
+    case "${apply_choice,,}" in
+        yes|y)
+            RUN_SAFE_APPLY=1
+            RUN_VALIDATE=1
+            ;;
+    esac
+}
+
+guided_install_mode
 echo "[+] Mode: integrations=$RUN_INTEGRATIONS docker=$INSTALL_DOCKER keybase=$INSTALL_KEYBASE keybase_login=$KEYBASE_LOGIN webui=$ENABLE_WEBUI validate=$RUN_VALIDATE safe_apply=$RUN_SAFE_APPLY"
 
 # 1. Install mandatory system packages if missing
