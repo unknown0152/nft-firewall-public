@@ -264,13 +264,37 @@ if [ -f /run/resolvconf/resolv.conf ] && ! [ -e /etc/resolv.conf ]; then
 fi
 
 # 2. Create temp workspace
-INSTALL_TMP=$(mktemp -d /tmp/nft-firewall-install.XXXXXX)
-echo "[+] Downloading full installer to $INSTALL_TMP..."
-
-# 3. Clone repository
 REPO_URL="${NFT_FIREWALL_REPO_URL:-https://github.com/unknown0152/nft-firewall-public.git}"
-echo "[+] Using repository: $REPO_URL"
-git clone -q "$REPO_URL" "$INSTALL_TMP"
+BRANCH="${NFT_FIREWALL_BRANCH:-main}"
+REF="${NFT_FIREWALL_REF:-$BRANCH}"
+SOURCE_DIR="${NFT_FIREWALL_SOURCE_DIR:-}"
+
+if [[ -n "$SOURCE_DIR" && -f "$SOURCE_DIR/setup.py" && -d "$SOURCE_DIR/scripts" ]]; then
+    INSTALL_TMP="$SOURCE_DIR"
+    echo "[+] Using installer checkout: $INSTALL_TMP"
+elif [[ -f ./setup.py && -d ./scripts && -d ./src ]]; then
+    INSTALL_TMP="$(pwd)"
+    echo "[+] Using local installer checkout: $INSTALL_TMP"
+else
+    INSTALL_TMP=$(mktemp -d /tmp/nft-firewall-install.XXXXXX)
+    GIT_ERR=$(mktemp /tmp/nft-firewall-git.XXXXXX.err)
+    echo "[+] Cloning full installer to $INSTALL_TMP..."
+    echo "[+] Repository: $REPO_URL"
+    echo "[+] Ref: $REF"
+    if ! git clone -q --depth 1 --branch "$REF" "$REPO_URL" "$INSTALL_TMP" 2>"$GIT_ERR"; then
+        echo "[!] Shallow branch/tag clone failed; trying generic checkout..."
+        cat "$GIT_ERR" >&2 || true
+        rm -rf "$INSTALL_TMP"
+        INSTALL_TMP=$(mktemp -d /tmp/nft-firewall-install.XXXXXX)
+        git clone -q "$REPO_URL" "$INSTALL_TMP"
+        git -C "$INSTALL_TMP" fetch -q --depth 1 origin "$REF" || true
+        git -C "$INSTALL_TMP" checkout -q "$REF" 2>/dev/null || git -C "$INSTALL_TMP" checkout -q FETCH_HEAD
+    fi
+    rm -f "$GIT_ERR"
+fi
+if git -C "$INSTALL_TMP" rev-parse --short HEAD >/dev/null 2>&1; then
+    echo "[+] Checked out commit: $(git -C "$INSTALL_TMP" rev-parse --short HEAD)"
+fi
 
 # 4. Run the full installer logic
 cd "$INSTALL_TMP"

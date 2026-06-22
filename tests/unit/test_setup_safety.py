@@ -795,18 +795,29 @@ def test_setup_sh_uses_public_repo_url_by_default():
     text = setup_sh.read_text()
 
     assert "NFT_FIREWALL_REPO_URL" in text
+    assert "NFT_FIREWALL_BRANCH" in text
+    assert "NFT_FIREWALL_REF" in text
+    assert "NFT_FIREWALL_SOURCE_DIR" in text
     assert "https://github.com/unknown0152/nft-firewall-public.git" in text
-    assert "git clone -q \"$REPO_URL\"" in text
+    assert 'git clone -q --depth 1 --branch "$REF" "$REPO_URL" "$INSTALL_TMP"' in text
+    assert 'git -C "$INSTALL_TMP" checkout -q "$REF"' in text
+    assert "Using installer checkout" in text
     assert "git clone -q https://github.com/unknown0152/nft-firewall.git" not in text
 
 
-def test_install_sh_fetches_public_setup_and_preserves_args():
+def test_install_sh_clones_public_repo_once_and_preserves_args():
     install_sh = Path(__file__).resolve().parent.parent.parent / "install.sh"
     text = install_sh.read_text()
 
-    assert "https://raw.githubusercontent.com/unknown0152/nft-firewall-public/${BRANCH}/setup.sh" in text
-    assert "NFT_FIREWALL_SETUP_URL" in text
-    assert 'bash "$tmp" "$@"' in text
+    assert "https://github.com/unknown0152/nft-firewall-public.git" in text
+    assert "NFT_FIREWALL_REPO_URL" in text
+    assert "NFT_FIREWALL_BRANCH" in text
+    assert "NFT_FIREWALL_REF" in text
+    assert 'git clone -q --depth 1 --branch "$REF" "$REPO_URL" "$tmp"' in text
+    assert 'git -C "$tmp" checkout -q "$REF"' in text
+    assert "Checked out commit:" in text
+    assert 'NFT_FIREWALL_SOURCE_DIR="$tmp" bash ./setup.sh "$@"' in text
+    assert "raw.githubusercontent.com/unknown0152/nft-firewall-public/${BRANCH}/setup.sh" not in text
 
 
 def test_install_sh_writes_timestamped_install_log():
