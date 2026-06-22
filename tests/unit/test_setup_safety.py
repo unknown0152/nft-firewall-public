@@ -1,6 +1,7 @@
 import sys
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
@@ -385,6 +386,7 @@ def test_keybase_chatops_ready_requires_working_wrapper(monkeypatch, tmp_path):
     monkeypatch.setattr(setup.shutil, "which", lambda cmd: "/usr/bin/keybase" if cmd == "keybase" else None)
     monkeypatch.setattr(setup.pwd, "getpwnam", lambda user: object())
     monkeypatch.setattr(setup, "KEYBASE_WRAPPER", wrapper)
+    monkeypatch.setattr(setup, "_prepare_keybase_session", lambda user: None)
     monkeypatch.setattr(setup.subprocess, "run", fake_run)
     monkeypatch.setattr(setup, "_ok", lambda *a, **kw: None)
     monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
@@ -413,6 +415,7 @@ def test_keybase_chatops_ready_rejects_logged_out_wrapper(monkeypatch, tmp_path)
     monkeypatch.setattr(setup.shutil, "which", lambda cmd: "/usr/bin/keybase" if cmd == "keybase" else None)
     monkeypatch.setattr(setup.pwd, "getpwnam", lambda user: object())
     monkeypatch.setattr(setup, "KEYBASE_WRAPPER", wrapper)
+    monkeypatch.setattr(setup, "_prepare_keybase_session", lambda user: None)
     monkeypatch.setattr(
         setup.subprocess,
         "run",
@@ -432,6 +435,55 @@ def test_keybase_chatops_ready_rejects_logged_out_wrapper(monkeypatch, tmp_path)
     assert any("Keybase user session is not reachable for botuser" in msg for msg in warnings)
     assert any("Repair with: sudo -iu botuser run_keybase -g" in msg for msg in warnings)
     assert not any("dial unix" in msg for msg in warnings)
+
+
+def test_prepare_keybase_session_starts_service_without_login_prompt(monkeypatch):
+    import setup
+    import subprocess as _subprocess
+
+    calls = []
+    monkeypatch.delenv("NFT_FIREWALL_KEYBASE_LOGIN", raising=False)
+    monkeypatch.setattr(setup, "_info", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "time", SimpleNamespace(sleep=lambda _seconds: None))
+    monkeypatch.setattr(setup, "_keybase_direct_whoami", lambda _user: "")
+    monkeypatch.setattr(setup, "_ask_tty_yes_no", lambda *a, **kw: False)
+    monkeypatch.setattr(
+        setup.subprocess,
+        "run",
+        lambda cmd, **kwargs: calls.append((cmd, kwargs))
+        or _subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+
+    setup._prepare_keybase_session("botuser")
+
+    assert calls
+    assert calls[0][0][:3] == ["sudo", "-iu", "botuser"]
+    assert "run_keybase -g" in calls[0][0][-1]
+    assert not any("keybase login" in call[0][-1] for call in calls)
+
+
+def test_prepare_keybase_session_launches_login_when_requested(monkeypatch):
+    import setup
+    import subprocess as _subprocess
+
+    calls = []
+    monkeypatch.setenv("NFT_FIREWALL_KEYBASE_LOGIN", "1")
+    monkeypatch.setattr(setup, "_info", lambda *a, **kw: None)
+    monkeypatch.setattr(setup, "time", SimpleNamespace(sleep=lambda _seconds: None))
+    monkeypatch.setattr(setup, "_keybase_direct_whoami", lambda _user: "")
+    monkeypatch.setattr(setup, "_ask_tty_yes_no", lambda *a, **kw: False)
+    monkeypatch.setattr(setup, "_dev_tty_available", lambda: True)
+    monkeypatch.setattr(
+        setup.subprocess,
+        "run",
+        lambda cmd, **kwargs: calls.append((cmd, kwargs))
+        or _subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+
+    setup._prepare_keybase_session("botuser")
+
+    assert any("run_keybase -g" in call[0][-1] for call in calls)
+    assert any("keybase login </dev/tty" in call[0][-1] for call in calls)
 
 
 def test_preflight_passes_on_valid_ruleset(monkeypatch, tmp_path):

@@ -1004,6 +1004,79 @@ def _keybase_failure_summary(detail: str, linux_user: str) -> str:
     return f"Keybase wrapper cannot access a logged-in session for {linux_user}"
 
 
+def _dev_tty_available() -> bool:
+    return os.access("/dev/tty", os.R_OK | os.W_OK)
+
+
+def _ask_tty_yes_no(prompt: str, *, default: bool = False) -> bool:
+    if not _dev_tty_available():
+        return default
+    try:
+        with open("/dev/tty", "r+", encoding="utf-8") as tty:
+            tty.write(prompt)
+            tty.flush()
+            answer = tty.readline().strip().lower()
+    except OSError:
+        return default
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def _keybase_direct_whoami(linux_user: str) -> str:
+    result = subprocess.run(
+        ["sudo", "-iu", linux_user, "keybase", "whoami"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _prepare_keybase_session(linux_user: str) -> None:
+    """Start Keybase for linux_user and optionally launch interactive login."""
+    _info(f"Starting Keybase service for {linux_user} if needed...")
+    subprocess.run(
+        [
+            "sudo",
+            "-iu",
+            linux_user,
+            "sh",
+            "-c",
+            "command -v run_keybase >/dev/null 2>&1 && run_keybase -g >/tmp/nft-firewall-keybase-run.log 2>&1 || true",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    time.sleep(2)
+    if _keybase_direct_whoami(linux_user):
+        return
+
+    requested = os.environ.get("NFT_FIREWALL_KEYBASE_LOGIN") == "1"
+    should_login = requested
+    if not should_login:
+        should_login = _ask_tty_yes_no(
+            f"  Keybase is not logged in for {linux_user}. Launch interactive login now? Type yes to continue [no]: ",
+            default=False,
+        )
+    if not should_login:
+        return
+
+    if not _dev_tty_available():
+        _warn(f"Keybase login requested, but /dev/tty is not available for {linux_user}")
+        return
+
+    _info(f"Launching interactive Keybase login for {linux_user}...")
+    subprocess.run(
+        ["sudo", "-iu", linux_user, "sh", "-c", "keybase login </dev/tty"],
+        check=False,
+    )
+
+
 def _read_install_config() -> configparser.ConfigParser:
     """Load the installed or local firewall.ini for installer decisions."""
     cfg = configparser.ConfigParser()
@@ -1067,6 +1140,12 @@ def _keybase_chatops_ready() -> bool:
     if not wrapper.exists():
         _warn(f"Skipping Keybase services: {wrapper} is missing")
         return False
+
+    try:
+        _prepare_keybase_session(linux_user)
+    except Exception as exc:
+        if os.environ.get("NFT_FIREWALL_DEBUG") == "1":
+            _warn(f"Could not prepare Keybase session for {linux_user}: {exc}")
 
     env = os.environ.copy()
     env["NFT_FIREWALL_KEYBASE_USER"] = linux_user
