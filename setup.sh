@@ -17,8 +17,34 @@ INSTALL_DOCKER=0
 INSTALL_KEYBASE=0
 KEYBASE_LOGIN=0
 ENABLE_WEBUI=0
-for arg in "$@"; do
+RUN_VALIDATE=1
+RUN_SAFE_APPLY=0
+PROFILE=""
+
+while [[ "$#" -gt 0 ]]; do
+    arg="$1"
     case "$arg" in
+        --core)
+            # Explicit core-only mode. This is also the default.
+            ;;
+        --cosmos|--media|--media-server)
+            RUN_INTEGRATIONS=1
+            INSTALL_DOCKER=1
+            ENABLE_WEBUI=1
+            ;;
+        --full)
+            RUN_INTEGRATIONS=1
+            INSTALL_DOCKER=1
+            INSTALL_KEYBASE=1
+            ENABLE_WEBUI=1
+            ;;
+        --full-login|--with-all)
+            RUN_INTEGRATIONS=1
+            INSTALL_DOCKER=1
+            INSTALL_KEYBASE=1
+            KEYBASE_LOGIN=1
+            ENABLE_WEBUI=1
+            ;;
         --with-integrations|--with-cosmos-keybase)
             RUN_INTEGRATIONS=1
             ;;
@@ -38,18 +64,55 @@ for arg in "$@"; do
         --with-webui)
             ENABLE_WEBUI=1
             ;;
+        --validate)
+            RUN_VALIDATE=1
+            ;;
+        --no-validate)
+            RUN_VALIDATE=0
+            ;;
+        --safe-apply|--apply)
+            RUN_VALIDATE=1
+            RUN_SAFE_APPLY=1
+            ;;
+        --profile)
+            shift || {
+                echo "[FATAL] --profile requires a value" >&2
+                exit 2
+            }
+            PROFILE="$1"
+            ;;
+        --profile=*)
+            PROFILE="${arg#--profile=}"
+            ;;
         -h|--help)
             cat <<'USAGE'
-Usage: sudo bash setup.sh [--with-integrations] [--with-docker] [--with-keybase] [--with-keybase-login] [--with-webui]
+Usage:
+  sudo bash setup.sh [mode] [options]
 
-Installs the core nft-firewall project. Optional Cosmos/Keybase hardening is
-skipped by default and only runs when --with-integrations is supplied.
+Simple modes:
+  --core        core firewall only (default)
+  --cosmos      core + Cosmos/media hardening + Docker + web dashboard
+  --media       alias for --cosmos
+  --full        core + Cosmos/Docker/web dashboard + Keybase package
+  --full-login  same as --full, then launch interactive Keybase login
 
+Validation:
+  --validate    run fw doctor + fw simulate after install (default)
+  --no-validate skip post-install validation
+  --safe-apply  after validation, run fw safe-apply interactively
+  --profile X   profile used for validation/safe-apply (auto-detected by default)
+
+Advanced compatibility flags:
   --with-integrations  configure optional Cosmos/Keybase integration
   --with-docker        also install Docker Engine for Cosmos app management
   --with-keybase       also install the Keybase Linux package
   --with-keybase-login install Keybase and launch interactive login as the Keybase Linux user
   --with-webui         enable local read-only dashboard on 127.0.0.1:8787
+
+Examples:
+  curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
+  curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --cosmos
+  curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login
 USAGE
             exit 0
             ;;
@@ -58,9 +121,11 @@ USAGE
             exit 2
             ;;
     esac
+    shift
 done
 
 echo "[+] NFT Firewall Bootstrapper"
+echo "[+] Mode: integrations=$RUN_INTEGRATIONS docker=$INSTALL_DOCKER keybase=$INSTALL_KEYBASE keybase_login=$KEYBASE_LOGIN webui=$ENABLE_WEBUI validate=$RUN_VALIDATE safe_apply=$RUN_SAFE_APPLY"
 
 # 1. Install mandatory system packages if missing
 echo "[+] Updating package cache and installing mandatory tools..."
@@ -127,6 +192,55 @@ if [[ "$ENABLE_WEBUI" -eq 1 ]]; then
     systemctl enable --now nft-webui.service
     echo "    Local URL: http://127.0.0.1:8787"
     echo "    Put Cosmos Cloud in front of this local URL and require Cosmos login."
+fi
+
+detect_profile() {
+    if [[ -n "$PROFILE" ]]; then
+        printf '%s\n' "$PROFILE"
+        return
+    fi
+    python3 - <<'PY'
+import configparser
+from pathlib import Path
+
+cfg = configparser.ConfigParser()
+for path in (Path("/opt/nft-firewall/config/firewall.ini"), Path("/etc/nft-firewall/firewall.ini")):
+    if path.exists():
+        cfg.read(path)
+        break
+print(cfg.get("install", "profile", fallback="cosmos-vpn-secure").strip() or "cosmos-vpn-secure")
+PY
+}
+
+if [[ "$RUN_VALIDATE" -eq 1 ]] && command -v fw >/dev/null 2>&1; then
+    PROF="$(detect_profile)"
+    VALIDATION_OK=1
+    echo ""
+    echo "[+] Post-install validation for profile: $PROF"
+    if fw doctor "$PROF"; then
+        echo "[ok] fw doctor passed"
+    else
+        echo "[!] fw doctor reported issues; inspect output above before applying rules"
+        VALIDATION_OK=0
+    fi
+
+    if fw simulate "$PROF"; then
+        echo "[ok] fw simulate passed"
+    else
+        echo "[!] fw simulate failed; do not apply rules until fixed"
+        VALIDATION_OK=0
+    fi
+
+    if [[ "$RUN_SAFE_APPLY" -eq 1 && "$VALIDATION_OK" -eq 1 ]]; then
+        echo "[+] Running interactive safe-apply for profile: $PROF"
+        fw safe-apply "$PROF"
+    elif [[ "$RUN_SAFE_APPLY" -eq 1 ]]; then
+        echo "[!] Skipping safe-apply because validation did not pass cleanly"
+    else
+        echo "[+] To apply rules interactively later: sudo fw safe-apply $PROF"
+    fi
+elif [[ "$RUN_VALIDATE" -eq 1 ]]; then
+    echo "[!] fw command not found; skipping post-install validation"
 fi
 
 echo ""

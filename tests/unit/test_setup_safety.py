@@ -646,18 +646,33 @@ def test_setup_sh_integrations_are_explicit_opt_in():
     assert "INSTALL_DOCKER=0" in text
     assert "INSTALL_KEYBASE=0" in text
     assert "KEYBASE_LOGIN=0" in text
+    assert "RUN_VALIDATE=1" in text
+    assert "RUN_SAFE_APPLY=0" in text
+    assert "--core)" in text
+    assert "--cosmos|--media|--media-server)" in text
+    assert "--full)" in text
+    assert "--full-login|--with-all)" in text
     assert "--with-integrations" in text
     assert "--with-docker" in text
     assert "--with-keybase" in text
     assert "--with-keybase-login" in text
+    assert "--safe-apply|--apply)" in text
+    assert "--no-validate)" in text
     assert 'INSTALL_DOCKER=1' in text
     assert 'INSTALL_KEYBASE=1' in text
     assert 'KEYBASE_LOGIN=1' in text
+    assert 'ENABLE_WEBUI=1' in text
     assert 'export NFT_FIREWALL_INSTALL_DOCKER="$INSTALL_DOCKER"' in text
     assert 'export NFT_FIREWALL_INSTALL_KEYBASE="$INSTALL_KEYBASE"' in text
     assert 'export NFT_FIREWALL_KEYBASE_LOGIN="$KEYBASE_LOGIN"' in text
     assert "Skipping optional Cosmos/Keybase hardening" in text
     assert 'if [[ "$RUN_INTEGRATIONS" -eq 1 ]]' in text
+    assert 'fw doctor "$PROF"' in text
+    assert 'fw simulate "$PROF"' in text
+    assert "VALIDATION_OK=0" in text
+    assert '[[ "$RUN_SAFE_APPLY" -eq 1 && "$VALIDATION_OK" -eq 1 ]]' in text
+    assert 'fw safe-apply "$PROF"' in text
+    assert "sudo fw safe-apply $PROF" in text
 
 
 def test_core_hardening_owns_optional_srv_cosmos_layout():

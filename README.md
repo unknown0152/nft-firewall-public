@@ -55,50 +55,59 @@ Target: Debian 13 with systemd and console or out-of-band recovery access.
 Run this only after reviewing whether the default package and service changes
 fit the target host.
 
-Core firewall install:
+Core firewall install. This is the default and runs post-install `fw doctor`
+and `fw simulate` automatically:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
 ```
 
-Core install plus optional Cosmos/Keybase integration:
+Cosmos/media server install. This adds optional Cosmos/media hardening, Docker
+Engine for Cosmos app management, and the read-only local dashboard for use
+behind Cosmos authentication:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --cosmos
 ```
 
-Core install plus Cosmos/Keybase integration, Docker Engine for Cosmos app
-management, and Keybase package installation:
+Full install. This adds Cosmos/media hardening, Docker, the dashboard, and the
+Keybase Linux package:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker --with-keybase
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full
 ```
 
-To install Keybase and launch its interactive login prompt during setup, use:
+Full install with interactive Keybase login:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker --with-keybase-login
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login
 ```
 
-To also enable the read-only local web dashboard for use behind Cosmos
-authentication, add `--with-webui`:
+To apply firewall rules during the same run, add `--safe-apply`. This still uses
+safe mode and requires typing `CONFIRM`, so a bad SSH paste rolls back:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --with-integrations --with-docker --with-keybase-login --with-webui
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login --safe-apply
 ```
 
 The curl entrypoint prints normally and also writes a root-only install log under
 `/var/log/nft-firewall/install-*.log` for troubleshooting.
 
-For a verbose debug install log, keep `--with-integrations` on the same shell
-command:
+For a verbose debug install log, keep all flags on the same shell command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh \
-  | sudo NFT_FIREWALL_INSTALL_LOG=/root/nft-firewall-install-debug.log NFT_FIREWALL_DEBUG=1 bash -s -- --with-integrations --with-docker --with-keybase-login
+  | sudo NFT_FIREWALL_INSTALL_LOG=/root/nft-firewall-install-debug.log NFT_FIREWALL_DEBUG=1 bash -s -- --full-login
 ```
 
-After the core install, validate before applying firewall rules:
+Advanced flags are still available for custom combinations:
+
+```bash
+--with-integrations --with-docker --with-keybase --with-keybase-login --with-webui
+--validate --no-validate --safe-apply --profile cosmos-vpn-secure
+```
+
+Manual validation remains available any time:
 
 ```bash
 sudo fw doctor cosmos-vpn-secure
