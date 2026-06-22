@@ -56,7 +56,8 @@ Run this only after reviewing whether the default package and service changes
 fit the target host.
 
 Guided install. Paste one command, choose the install type, then the installer
-runs `fw doctor` and `fw simulate` automatically:
+clones the public Git repository, prints the exact checked-out commit, and runs
+`fw doctor` plus `fw simulate` automatically:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
@@ -82,6 +83,9 @@ For automation, skip the menu with a mode flag:
 # Update existing install only, no config wizard
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update
 
+# Update existing install and offer/launch Keybase login if needed
+curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update --with-keybase-login
+
 # Core firewall only
 curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --core
 
@@ -104,7 +108,12 @@ curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/mai
 ```
 
 The curl entrypoint prints normally and also writes a root-only install log under
-`/var/log/nft-firewall/install-*.log` for troubleshooting.
+`/var/log/nft-firewall/install-*.log` for troubleshooting. The raw GitHub file is
+only a small entrypoint; it clones `https://github.com/unknown0152/nft-firewall-public.git`
+and runs `setup.sh` from that checkout so the installer uses a real Git ref
+instead of chaining multiple raw GitHub downloads. By default it checks out
+`main`; override with `NFT_FIREWALL_REF`, `NFT_FIREWALL_BRANCH`, or
+`NFT_FIREWALL_REPO_URL` when testing a branch, tag, commit, or fork.
 
 For a verbose debug install log, keep all flags on the same shell command:
 
@@ -134,12 +143,14 @@ Engine from Docker's Debian repository only after writing `/etc/docker/daemon.js
 with `iptables=false`, `ip6tables=false`, and `data-root=/srv/docker`, so
 nft-firewall remains the firewall authority.
 
-The `--with-keybase` path installs the Keybase Linux package, detects the
-configured Linux user, and reports whether Keybase is logged in. The
-`--with-keybase-login` path additionally starts Keybase headless and launches
-the interactive `keybase login` prompt as that Linux user. After logging in,
-re-run `sudo python3 /opt/nft-firewall/setup.py install --reconfigure` if the
-initial firewall config was created with blank Keybase fields.
+The `--with-keybase` path installs the Keybase Linux package and detects the
+configured Linux user from `[keybase] linux_user`. During install or update, the
+core installer now tries to start that user's Keybase service with
+`run_keybase -g` before deciding ChatOps units are unavailable. The
+`--with-keybase-login` path additionally launches the interactive
+`keybase login` prompt as that Linux user when a login is still needed. After
+logging in, re-run the installer with `--update` or run `fw keybase-test` to
+verify notifications.
 
 Clean-VM validation covered the installer path without Keybase or a real
 WireGuard provider. Cosmos starts without Docker, but container management

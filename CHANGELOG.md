@@ -16,6 +16,14 @@
 
 ### Fixed
 
+- Changed the curl entrypoint to clone the public Git repository and run
+  `setup.sh` from that checkout instead of fetching a second raw GitHub script.
+  The installer now prints the checked-out commit and supports
+  `NFT_FIREWALL_REF`, `NFT_FIREWALL_BRANCH`, and `NFT_FIREWALL_REPO_URL`.
+- Added update-only installer mode with existing `firewall.ini` preservation,
+  post-install validation, and no configuration wizard.
+- Quieted update-only installer noise when `fw-admin` is already running
+  services and when Keybase is not logged in.
 - Fixed `fw doctor` false positives for source-restricted physical-interface
   80/443 rules, including LAN-only and geowhitelist-gated rules.
 - Isolated doctor unit tests from the host's live ruleset so mocked interface
@@ -33,6 +41,11 @@
 
 ### Added
 
+- Added guided installer modes for update-only, core firewall, Cosmos/media,
+  full server, and full server with interactive Keybase login.
+- Added smarter Keybase preparation during install/update: the installer starts
+  the configured user's Keybase service with `run_keybase -g`, then optionally
+  launches interactive `keybase login` when requested.
 - Added best-effort JSONL audit logging for successful dynamic set mutations
   at `/var/log/nft-firewall/audit.jsonl`. This records actor, uid/euid,
   action, set name, item count, and mutated items without changing

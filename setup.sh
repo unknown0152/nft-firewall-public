@@ -2,8 +2,8 @@
 # =============================================================================
 # NFT Firewall + Cosmos Installer — Bootstrap
 # =============================================================================
-# This script is a lightweight loader that fetches the full installer logic
-# from the repository to avoid truncation issues during 'curl | bash' piping.
+# This script runs from a local checkout. The public curl entrypoint clones the
+# repository first, then invokes this file from the checked-out Git ref.
 # =============================================================================
 set -euo pipefail
 
@@ -138,6 +138,7 @@ Advanced compatibility flags:
 Examples:
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update
+  curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --update --with-keybase-login
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --cosmos
   curl -fsSL https://raw.githubusercontent.com/unknown0152/nft-firewall-public/main/install.sh | sudo bash -s -- --full-login
 USAGE
