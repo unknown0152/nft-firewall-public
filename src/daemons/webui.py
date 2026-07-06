@@ -102,6 +102,59 @@ def _cpu_load() -> dict[str, Any]:
     }
 
 
+_LAST_CORES: dict[str, tuple[int, int]] = {}
+
+
+def _cpu_percore() -> list[float | None]:
+    """Per-core busy percentages since the previous call (btop-style meters)."""
+    results: list[float | None] = []
+    try:
+        lines = Path("/proc/stat").read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return results
+    with _SAMPLE_LOCK:
+        for line in lines:
+            fields = line.split()
+            if not fields or not fields[0].startswith("cpu") or fields[0] == "cpu":
+                continue
+            values = [int(v) for v in fields[1:]]
+            idle = values[3] + (values[4] if len(values) > 4 else 0)
+            total = sum(values)
+            prev = _LAST_CORES.get(fields[0])
+            _LAST_CORES[fields[0]] = (total, idle)
+            if prev and total > prev[0]:
+                delta_total = total - prev[0]
+                delta_idle = idle - prev[1]
+                results.append(round(max(0.0, min(100.0, (1 - delta_idle / delta_total) * 100)), 1))
+            else:
+                results.append(None)
+    return results
+
+
+_LIVE_IFACES: list[str] = []
+
+
+def collect_live() -> dict[str, Any]:
+    """Cheap high-frequency sample (pure /proc reads) for the live charts.
+
+    Deliberately avoids the watchdog/systemctl/docker collectors — this is
+    polled every second, so it must stay at "read a few procfs files" cost.
+    """
+    if not _LIVE_IFACES:
+        cfg = _load_config(_config_path())
+        phy = cfg.get("network", "phy_if", fallback="").strip()
+        vpn = cfg.get("network", "vpn_interface", fallback="wg0").strip()
+        _LIVE_IFACES.extend(i for i in (vpn, phy) if i)
+    return {
+        "t": time.time(),
+        "cpu": _cpu_load(),
+        "percore": _cpu_percore(),
+        "memory": _memory_usage(),
+        "disk": _disk_usage("/"),
+        "network": _network_usage(list(_LIVE_IFACES)),
+    }
+
+
 def _memory_usage() -> dict[str, Any]:
     try:
         info: dict[str, int] = {}
@@ -495,6 +548,20 @@ _PAGE_TEMPLATE = """<!doctype html>
     .portchip .desc { color: var(--muted); font-size: 11px; font-family: system-ui, sans-serif; }
     .portchip .scope { color: var(--ok); font-size: 10px; letter-spacing: 1px; }
 
+    canvas { display: block; width: 100%; border-radius: 10px; background: var(--inset); border: 1px solid var(--line); }
+    .cores { display: grid; grid-template-columns: repeat(auto-fit, minmax(34px, 1fr)); gap: 6px; margin-bottom: 12px; }
+    .corebar { position: relative; height: 30px; border-radius: 6px; background: var(--inset); border: 1px solid var(--line); overflow: hidden; }
+    .corebar i {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 0;
+      background: linear-gradient(180deg, var(--accent), var(--ok));
+      transition: height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .corebar.hot i { background: linear-gradient(180deg, var(--bad), var(--warn)); }
+    .corebar label { position: absolute; inset: 0; display: grid; place-items: center; font-size: 9px; color: rgba(232,238,245,0.75); font-family: var(--mono); z-index: 1; }
+    .legend { display: inline-flex; align-items: center; gap: 5px; color: var(--soft); font-size: 12px; }
+    .swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+    .swatch.rx { background: var(--accent); }
+    .swatch.tx { background: var(--ok); }
     footer {
       margin-top: 14px; display: flex; justify-content: space-between; gap: 10px;
       color: var(--muted); font-size: 11.5px; font-family: var(--mono);
@@ -571,12 +638,13 @@ _PAGE_TEMPLATE = """<!doctype html>
         <div class="rows" id="tCountries"></div>
       </section>
 
-      <section class="card">
+      <section class="card live">
         <h2>Live System</h2>
         <div class="meter">
           <div class="head"><span>CPU</span><strong id="cpuText">&hellip;</strong></div>
-          <div class="track"><div class="fill" id="cpuBar"></div></div>
+          <canvas id="cpuChart" height="72"></canvas>
         </div>
+        <div class="cores" id="coreGrid"></div>
         <div class="meter">
           <div class="head"><span>Memory</span><strong id="memText">&hellip;</strong></div>
           <div class="track"><div class="fill" id="memBar"></div></div>
@@ -587,9 +655,13 @@ _PAGE_TEMPLATE = """<!doctype html>
         </div>
       </section>
 
-      <section class="card">
+      <section class="card live">
         <h2>Network Throughput</h2>
-        <div class="rows" id="netRows"><div class="row"><span class="k">warming up</span><span class="v"></span></div></div>
+        <div class="meter">
+          <div class="head"><span class="legend"><i class="swatch rx"></i>down &nbsp;<i class="swatch tx"></i>up</span><strong id="netText">&hellip;</strong></div>
+          <canvas id="netChart" height="72"></canvas>
+        </div>
+        <div class="rows" id="netRows"></div>
       </section>
 
       <section class="card">
@@ -680,23 +752,6 @@ _PAGE_TEMPLATE = """<!doctype html>
         `<div class="row"><span class="k">${row.flag || ""} ${row.cc} attacks blocked</span><span class="v">${num(row.count)}</span></div>`
       ).join("") || `<div class="row"><span class="k">attacking countries</span><span class="v">none recorded</span></div>`;
 
-      const cpu = s.cpu || {};
-      const cpuPct = cpu.percent ?? ((cpu.load_ratio || 0) * 100);
-      $("cpuText").textContent = cpu.percent === null || cpu.percent === undefined
-        ? `load ${cpu.load?.one ?? "--"} / ${cpu.cores ?? "--"} cores`
-        : `${cpu.percent.toFixed(1)}% \u00b7 ${cpu.cores ?? "--"} cores`;
-      setBar("cpuBar", cpuPct);
-      const mem = s.memory || {};
-      $("memText").textContent = `${mem.percent ?? "--"}% \u00b7 ${fmtBytes(mem.used)} / ${fmtBytes(mem.total)}`;
-      setBar("memBar", mem.percent);
-      const disk = s.disk || {};
-      $("diskText").textContent = `${disk.percent ?? "--"}% \u00b7 ${fmtBytes(disk.used)} / ${fmtBytes(disk.total)}`;
-      setBar("diskBar", disk.percent);
-
-      $("netRows").innerHTML = (s.network || []).map(row =>
-        `<div class="row"><span class="v">${row.iface}</span><span class="v">&#8595; ${fmtRate(row.rx_rate)} &nbsp; &#8593; ${fmtRate(row.tx_rate)}</span></div>`
-      ).join("") || `<div class="row"><span class="k">no interface data</span><span class="v"></span></div>`;
-
       $("serviceChips").innerHTML = (s.services || []).map(row =>
         `<span class="chip"><i class="dot ${svcOk(row) ? "ok" : "bad"}"></i>${svcName(row.name)}</span>`
       ).join("");
@@ -707,6 +762,101 @@ _PAGE_TEMPLATE = """<!doctype html>
 
       $("updated").textContent = "just now";
     }
+    /* ── btop-style live charts (1 s cadence via /api/live) ─────────────── */
+    const HIST = 120;
+    const cpuHist = [];
+    const rxHist = [];
+    const txHist = [];
+    let coreCount = 0;
+
+    function drawChart(canvas, seriesList, maxValue) {
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth, hgt = canvas.clientHeight;
+      if (!w) return;
+      if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr); }
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, hgt);
+      ctx.strokeStyle = "rgba(148,163,184,0.10)";
+      ctx.lineWidth = 1;
+      [0.25, 0.5, 0.75].forEach(f => {
+        ctx.beginPath(); ctx.moveTo(0, hgt * f); ctx.lineTo(w, hgt * f); ctx.stroke();
+      });
+      for (const series of seriesList) {
+        const data = series.data;
+        if (data.length < 2) continue;
+        const step = w / (HIST - 1);
+        const x0 = w - (data.length - 1) * step;
+        const y = (v) => hgt - 2 - Math.max(0, Math.min(1, v / maxValue)) * (hgt - 6);
+        ctx.beginPath();
+        data.forEach((v, i) => { const x = x0 + i * step; if (i === 0) ctx.moveTo(x, y(v)); else ctx.lineTo(x, y(v)); });
+        ctx.strokeStyle = series.color; ctx.lineWidth = 1.6; ctx.lineJoin = "round"; ctx.stroke();
+        ctx.lineTo(x0 + (data.length - 1) * step, hgt); ctx.lineTo(x0, hgt); ctx.closePath();
+        const grad = ctx.createLinearGradient(0, 0, 0, hgt);
+        grad.addColorStop(0, series.color.replace("1)", "0.26)"));
+        grad.addColorStop(1, series.color.replace("1)", "0.02)"));
+        ctx.fillStyle = grad; ctx.fill();
+      }
+    }
+
+    const push = (arr, v) => { arr.push(v); if (arr.length > HIST) arr.shift(); };
+    const niceMax = (v) => {
+      if (!isFinite(v) || v <= 0) return 1024;
+      const exp = Math.pow(1024, Math.floor(Math.log(v) / Math.log(1024)));
+      for (const m of [1, 2, 5, 10, 25, 50, 100, 250, 512, 1024]) { if (m * exp >= v) return m * exp; }
+      return v;
+    };
+
+    async function refreshLive() {
+      const res = await fetch("/api/live", {cache: "no-store"});
+      const s = await res.json();
+      lastData = Date.now();
+
+      const cpu = s.cpu || {};
+      const cpuPct = cpu.percent ?? ((cpu.load_ratio || 0) * 100);
+      $("cpuText").textContent = cpu.percent === null || cpu.percent === undefined
+        ? `load ${cpu.load?.one ?? "--"} / ${cpu.cores ?? "--"} cores`
+        : `${cpu.percent.toFixed(1)}% \u00b7 load ${cpu.load?.one ?? "--"}`;
+      push(cpuHist, cpuPct || 0);
+      drawChart($("cpuChart"), [{data: cpuHist, color: "rgba(34,211,238,1)"}], 100);
+
+      const cores = s.percore || [];
+      if (cores.length && cores.length !== coreCount) {
+        coreCount = cores.length;
+        $("coreGrid").innerHTML = cores.map((_, i) =>
+          `<div class="corebar" id="core${i}"><i></i><label>${i}</label></div>`).join("");
+      }
+      cores.forEach((v, i) => {
+        const el = $("core" + i);
+        if (!el) return;
+        el.classList.toggle("hot", (v || 0) >= 85);
+        el.firstElementChild.style.height = `${Math.max(3, Math.min(100, v || 0))}%`;
+      });
+
+      const mem = s.memory || {};
+      $("memText").textContent = `${mem.percent ?? "--"}% \u00b7 ${fmtBytes(mem.used)} / ${fmtBytes(mem.total)}`;
+      setBar("memBar", mem.percent);
+      const disk = s.disk || {};
+      $("diskText").textContent = `${disk.percent ?? "--"}% \u00b7 ${fmtBytes(disk.used)} / ${fmtBytes(disk.total)}`;
+      setBar("diskBar", disk.percent);
+
+      const net = s.network || [];
+      const rx = net.reduce((a, r) => a + (r.rx_rate || 0), 0);
+      const tx = net.reduce((a, r) => a + (r.tx_rate || 0), 0);
+      push(rxHist, rx); push(txHist, tx);
+      const peak = niceMax(Math.max(...rxHist, ...txHist, 1));
+      $("netText").textContent = `peak ${fmtBytes(peak)}/s`;
+      drawChart($("netChart"), [
+        {data: rxHist, color: "rgba(34,211,238,1)"},
+        {data: txHist, color: "rgba(52,211,153,1)"},
+      ], peak);
+      $("netRows").innerHTML = net.map(row =>
+        `<div class="row"><span class="v">${row.iface}</span><span class="v">&#8595; ${fmtRate(row.rx_rate)} &nbsp; &#8593; ${fmtRate(row.tx_rate)}</span></div>`
+      ).join("") || `<div class="row"><span class="k">warming up</span><span class="v"></span></div>`;
+    }
+    refreshLive().catch(console.error);
+    setInterval(() => refreshLive().catch(console.error), 1000);
+
     setInterval(() => {
       $("clock").textContent = new Date().toLocaleString(undefined, {weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit"});
       if (lastData) {
@@ -715,7 +865,7 @@ _PAGE_TEMPLATE = """<!doctype html>
       }
     }, 1000);
     refresh().catch(console.error);
-    setInterval(() => refresh().catch(console.error), 2000);
+    setInterval(() => refresh().catch(console.error), 5000);
   </script>
 </body>
 </html>
@@ -758,6 +908,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         route = urlparse(self.path).path
         try:
+            if route == "/api/live":
+                payload = json.dumps(collect_live()).encode("utf-8")
+                self._headers(HTTPStatus.OK, "application/json; charset=utf-8")
+                self.wfile.write(payload)
+                return
             data = cached_dashboard()
             if route in {"/", "/index.html"}:
                 page = render_dashboard(data).encode("utf-8")
