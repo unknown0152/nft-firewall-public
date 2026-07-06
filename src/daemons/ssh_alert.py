@@ -170,6 +170,47 @@ def _save_state(state_file: Path, inode: int, offset: int) -> None:
         json.dump({"inode": inode, "offset": offset}, f)
 
 
+def _journald_lines(*identifiers: str) -> Iterator[str]:
+    """Follow the systemd journal for the given syslog identifiers.
+
+    Fallback line source for hosts without rsyslog (no /var/log/auth.log —
+    e.g. Debian 12+ default installs), where sshd logs only to journald.
+    Yields lines in the classic short format so the existing sshd regexes
+    match unchanged.  Reconnects with backoff if journalctl ever exits.
+    """
+    cmd = ["journalctl", "--follow", "--lines=0", "--output=short"]
+    for ident in identifiers:
+        cmd += ["--identifier", ident]
+    while True:
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                yield line.rstrip("\n")
+            proc.wait(timeout=10)
+        except Exception as exc:
+            print(f"[WARN] journald follow failed: {exc}", flush=True)
+        print("[WARN] journalctl exited — reconnecting in 5s", flush=True)
+        time.sleep(5)
+
+
+def _auth_line_source() -> Iterator[str]:
+    """Pick the best source of sshd auth lines for this host.
+
+    Prefers the classic auth.log when rsyslog maintains it; otherwise follows
+    journald directly.  OpenSSH ≥ 9.8 logs under ``sshd-session``, older
+    versions under ``sshd`` — follow both.
+    """
+    if AUTH_LOG.exists():
+        print(f"[INFO] auth source: {AUTH_LOG}", flush=True)
+        return _tail_stateful(AUTH_LOG, _AUTH_STATE)
+    print("[INFO] auth source: journald (sshd, sshd-session) — no auth.log on this host",
+          flush=True)
+    return _journald_lines("sshd", "sshd-session")
+
+
 def _tail_stateful(log_path: Path, state_file: Path) -> Iterator[str]:
     """Logrotate-safe generator that yields new lines from *log_path*.
 
@@ -404,17 +445,17 @@ class SshAlertDaemon:
     #   Jan 15 03:22:10 host sshd[1234]: Failed password for root from 1.2.3.4 port 51234 ...
     #   Jan 15 03:22:10 host sshd[1234]: Failed password for invalid user foo from 1.2.3.4 ...
     _RE_ACCEPT = re.compile(
-        r"sshd\[\d+\]: Accepted \S+ for (\S+) from ([\d.:a-fA-F]+)"
+        r"sshd(?:-session)?\[\d+\]: Accepted \S+ for (\S+) from ([\d.:a-fA-F]+)"
     )
     _RE_FAIL   = re.compile(
-        r"sshd\[\d+\]: Failed \S+ for (?:invalid user )?(\S+) from ([\d.:a-fA-F]+)"
+        r"sshd(?:-session)?\[\d+\]: Failed \S+ for (?:invalid user )?(\S+) from ([\d.:a-fA-F]+)"
     )
 
     def _watch_attempts(self) -> None:
         """Tail auth.log and notify on successful logins and brute-force bursts."""
         from utils.keybase import notify
 
-        for line in _tail_stateful(AUTH_LOG, _AUTH_STATE):
+        for line in _auth_line_source():
             try:
                 # ── Successful login ─────────────────────────────────────────
                 m = self._RE_ACCEPT.search(line)
