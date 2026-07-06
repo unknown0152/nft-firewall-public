@@ -619,6 +619,13 @@ def render_dashboard(data: dict[str, Any]) -> str:
       font-size: 12px;
     }}
     footer {{ margin-top: 18px; text-align: right; color: var(--muted); font-size: 12px; }}
+    /* Fluid up-scaling — big monitors get a proportionally larger UI
+       instead of a narrow 1360px strip of 14px text. Media queries are
+       evaluated against the real viewport, so these tiers don't cascade. */
+    @media (min-width: 1500px) {{ html {{ zoom: 1.1; }} }}
+    @media (min-width: 1800px) {{ html {{ zoom: 1.25; }} }}
+    @media (min-width: 2300px) {{ html {{ zoom: 1.5; }} }}
+    @media (min-width: 3200px) {{ html {{ zoom: 1.9; }} }}
     @media (max-width: 1000px) {{
       .layout {{ grid-template-columns: 1fr; }}
       .metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
