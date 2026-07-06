@@ -330,554 +330,414 @@ def _status_class(status: str) -> str:
     return "ok" if status.upper() == "HEALTHY" else "warn"
 
 
-def _metric(label: str, value: Any, tone: str = "") -> str:
-    return (
-        f'<section class="metric {html.escape(tone)}">'
-        f"<span>{html.escape(label)}</span>"
-        f"<strong>{html.escape(str(value))}</strong>"
-        "</section>"
-    )
-
-
 def _hide_ips(text: Any) -> str:
     return re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "hidden", str(text))
 
 
-def _report_sections(report: str) -> list[tuple[str, list[str]]]:
-    sections: list[tuple[str, list[str]]] = []
-    title = "Report"
-    lines: list[str] = []
-    for raw in report.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith("━━") or line.startswith("==="):
-            continue
-        if line.startswith(("🛡", "🌐", "🔐", "📦", "🧱", "💾", "🚦", "🧭")):
-            if lines:
-                sections.append((title, lines))
-            title = line
-            lines = []
-        else:
-            lines.append(line)
-    if lines:
-        sections.append((title, lines))
-    return sections or [("Report", [report])]
 
-
-def render_dashboard(data: dict[str, Any]) -> str:
-    """Render a complete live dark-mode dashboard page."""
-    health = data.get("health", {})
-    status = str(health.get("status", "UNKNOWN"))
-    reason = _hide_ips(health.get("reason", "No reason reported"))
-    status_class = _status_class(status)
-
-    handshake = health.get("handshake_age_s", "n/a")
-    markers = health.get("markers", "n/a")
-    nft_integrity = "intact" if health.get("nft_integrity") else "check"
-    persisted = health.get("persisted_ruleset_integrity", "unknown")
-    return f"""<!doctype html>
+_PAGE_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NFT Firewall Dashboard</title>
+  <title>NFT Firewall — Command Deck</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>&#128737;</text></svg>">
   <style>
-    :root {{
+    :root {
       color-scheme: dark;
-      --bg: #080a0d;
-      --bg-2: #0c1117;
-      --panel: #111821;
-      --panel-2: #151e29;
-      --panel-3: #0d131a;
-      --line: rgba(188, 202, 220, 0.14);
-      --line-strong: rgba(188, 202, 220, 0.24);
-      --text: #edf2f7;
-      --soft: #b7c1ce;
-      --muted: #7f8b9a;
-      --green: #34d399;
-      --green-glow: rgba(52, 211, 153, 0.22);
-      --yellow: #fbbf24;
-      --red: #fb7185;
-      --cyan: #38bdf8;
-      --violet: #a78bfa;
-      --orange: #fb923c;
-      --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
+      --bg: #05070b;
+      --card: rgba(17, 24, 34, 0.72);
+      --card-solid: #10171f;
+      --inset: rgba(8, 12, 17, 0.85);
+      --line: rgba(148, 163, 184, 0.13);
+      --line-2: rgba(148, 163, 184, 0.25);
+      --text: #e8eef5;
+      --soft: #aab6c4;
+      --muted: #6d7a89;
+      --ok: #34d399;
+      --ok-dim: rgba(52, 211, 153, 0.12);
+      --warn: #fbbf24;
+      --warn-dim: rgba(251, 191, 36, 0.12);
+      --bad: #f87171;
+      --bad-dim: rgba(248, 113, 113, 0.12);
+      --accent: #22d3ee;
+      --accent-dim: rgba(34, 211, 238, 0.12);
+      --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scrollbar-color: #22303f var(--bg); }
+    body {
       margin: 0;
       min-height: 100vh;
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
       background:
-        linear-gradient(180deg, #0b0f14 0%, var(--bg) 42%, #07080b 100%),
+        radial-gradient(1100px 480px at 18% -12%, rgba(34, 211, 238, 0.09), transparent 62%),
+        radial-gradient(900px 420px at 82% -10%, rgba(52, 211, 153, 0.08), transparent 60%),
+        linear-gradient(rgba(148,163,184,0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148,163,184,0.028) 1px, transparent 1px),
         var(--bg);
-      color: var(--text);
-      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      letter-spacing: 0;
-    }}
-    main {{ width: min(1360px, calc(100% - 28px)); margin: 0 auto; padding: 24px 0 36px; }}
-    header {{
-      display: flex;
-      justify-content: space-between;
-      align-items: stretch;
-      flex-wrap: wrap;
-      gap: 14px;
-      margin-bottom: 14px;
-    }}
-    h1 {{
-      margin: 0;
-      font-size: clamp(24px, 3vw, 34px);
-      font-weight: 760;
-      letter-spacing: 0;
-    }}
-    .masthead {{
-      min-width: min(620px, 100%);
-      flex: 1 1 auto;
-      padding: 18px 20px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: linear-gradient(180deg, rgba(21, 30, 41, 0.92), rgba(12, 17, 23, 0.92));
-      box-shadow: var(--shadow);
-    }}
-    .subtitle {{
-      margin-top: 8px;
-      color: var(--soft);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 13px;
-    }}
-    .status-card {{
-      min-width: 260px;
-      padding: 18px 20px;
-      border: 1px solid var(--line);
-      border-left: 4px solid var(--yellow);
-      border-radius: 8px;
-      background: var(--panel);
-      text-align: right;
-      box-shadow: var(--shadow);
-    }}
-    .status-card.ok {{ border-left-color: var(--green); }}
-    .status-card.warn {{ border-left-color: var(--yellow); }}
-    .eyebrow {{
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      font-weight: 600;
-    }}
-    .status-card strong {{ display: block; margin-top: 4px; font-size: 26px; }}
-    .ok strong, .ok .value {{ color: var(--green); }}
-    .warn strong, .warn .value {{ color: var(--yellow); }}
-    .bad strong, .bad .value {{ color: var(--red); }}
-    .metrics {{
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 14px;
-    }}
-    .metric {{
-      min-height: 88px;
-      padding: 14px;
-      border-radius: 8px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-    }}
-    .metric span {{ display: block; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }}
-    .metric strong {{ display: block; margin-top: 10px; font-size: 19px; font-weight: 680; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }}
-    .metric strong.numeric {{ overflow-wrap: normal; white-space: nowrap; }}
-    .metric.ok strong {{ color: var(--green); }}
-    .metric.warn strong {{ color: var(--yellow); }}
-    .layout {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 380px;
-      gap: 14px;
-    }}
-    .panel {{
-      padding: 18px;
-      border-radius: 8px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
-      margin-bottom: 14px;
-    }}
-    .panel h2 {{
-      margin: 0 0 16px;
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text);
-    }}
-    .report-header {{
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 18px;
-      padding-bottom: 14px;
-      border-bottom: 1px solid var(--line);
-      margin-bottom: 16px;
-    }}
-    .report-header h3 {{ margin: 0 0 4px; font-size: 18px; color: var(--text); }}
-    .report-header p {{ margin: 0; color: var(--muted); font-size: 13px; }}
-    .report-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 14px;
-    }}
-    .report-section {{
-      padding: 14px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel-3);
-    }}
-    .report-section.wide {{ grid-column: 1 / -1; }}
-    .report-section h4 {{
-      margin: 0 0 12px;
-      font-size: 14px;
-      color: var(--soft);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }}
-    .report-list {{ list-style: none; padding: 0; margin: 0; }}
-    .report-list li {{
-      padding: 8px 0;
-      color: var(--text);
-      font-size: 13px;
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      border-bottom: 1px solid rgba(188, 202, 220, 0.08);
-    }}
-    .port-list {{
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 10px;
-    }}
-    .port-list li {{
-      display: grid;
-      gap: 6px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel-2);
-    }}
-    .port-line {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
-    .port-label {{ color: var(--soft); overflow-wrap: anywhere; }}
-    .status-indicator {{ display: inline-flex; align-items: center; gap: 6px; }}
-    .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; }}
-    .dot.green {{ background: var(--green); box-shadow: 0 0 8px var(--green-glow); }}
-    .dot.red {{ background: var(--red); box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }}
-    .dot.yellow {{ background: var(--yellow); box-shadow: 0 0 8px rgba(234, 179, 8, 0.35); }}
-    .side {{ display: grid; gap: 0; align-content: start; }}
-    .bars {{ display: grid; gap: 16px; }}
-    .bar-row {{ display: grid; gap: 8px; }}
-    .bar-head {{ display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); gap: 12px; }}
-    .bar-head strong {{ color: var(--text); font-weight: 500; }}
-    .track {{
-      height: 8px;
-      background: rgba(0,0,0,0.34);
-      border-radius: 99px;
-      overflow: hidden;
-      border: 1px solid var(--line);
-    }}
-    .fill {{
-      width: 0;
-      height: 100%;
-      background: linear-gradient(90deg, var(--cyan), var(--green));
-      border-radius: 99px;
-      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 0 10px rgba(56, 189, 248, 0.24);
-    }}
-    .threat-metrics {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }}
-    .threat-metrics .metric strong {{ font-size: 20px; }}
-    table {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
-    th, td {{
-      padding: 10px 4px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      font-size: 13px;
-    }}
-    th {{
-      color: var(--muted);
-      font-weight: 600;
-      text-transform: uppercase;
-      font-size: 11px;
-      letter-spacing: 0.5px;
-    }}
-    td:last-child, th:last-child {{ text-align: right; }}
-    tbody tr:last-child td {{ border-bottom: none; }}
-    tbody tr:hover td {{ background: rgba(255,255,255,0.02); }}
-    .pill {{ display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; background: var(--panel-3); color: var(--soft); font-size: 12px; font-weight: 700; }}
-    .pill.ok {{ background: rgba(34,197,94,0.1); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }}
-    .pill.warn {{ background: rgba(234,179,8,0.1); color: var(--yellow); border: 1px solid rgba(234,179,8,0.2); }}
-    .pill.bad {{ background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }}
-    code {{
-      font-family: ui-monospace, SFMono-Regular, monospace;
-      background: rgba(0,0,0,0.34);
-      padding: 2px 6px;
-      border-radius: 4px;
-      color: var(--cyan);
-      font-size: 12px;
-    }}
-    footer {{ margin-top: 18px; text-align: right; color: var(--muted); font-size: 12px; }}
-    /* Fluid up-scaling — big monitors get a proportionally larger UI
-       instead of a narrow 1360px strip of 14px text. Media queries are
-       evaluated against the real viewport, so these tiers don't cascade. */
-    @media (min-width: 1500px) {{ html {{ zoom: 1.1; }} }}
-    @media (min-width: 1800px) {{ html {{ zoom: 1.25; }} }}
-    @media (min-width: 2300px) {{ html {{ zoom: 1.5; }} }}
-    @media (min-width: 3200px) {{ html {{ zoom: 1.9; }} }}
-    @media (max-width: 1000px) {{
-      .layout {{ grid-template-columns: 1fr; }}
-      .metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-      .threat-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-      .status-card {{ width: 100%; text-align: left; }}
-    }}
-    @media (max-width: 640px) {{
-      main {{ width: min(100% - 16px, 1360px); padding-top: 8px; }}
-      header {{ flex-direction: column; align-items: stretch; gap: 10px; }}
-      h1 {{ font-size: 24px; }}
-      .metrics, .threat-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
-      .metric {{ min-height: 0; padding: 10px 12px; }}
-      .metric span {{ font-size: 10px; }}
-      .metric strong, .threat-metrics .metric strong {{ margin-top: 6px; font-size: 16px; }}
-      .panel {{ padding: 14px; }}
-      .report-header {{ display: block; }}
-      .port-list {{ grid-template-columns: 1fr; }}
-      .status-card strong {{ font-size: 22px; }}
-      footer {{ text-align: center; }}
-    }}
+      background-size: auto, auto, 44px 44px, 44px 44px, auto;
+    }
+    main { width: min(1720px, 100% - 28px); margin: 0 auto; padding: 14px 0 22px; }
+
+    /* ── top bar ─────────────────────────────────────────────────────────── */
+    .topbar {
+      display: flex; align-items: center; gap: 16px;
+      padding: 12px 18px; margin-bottom: 12px;
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      backdrop-filter: blur(8px);
+    }
+    .sigil {
+      width: 42px; height: 42px; flex: none; display: grid; place-items: center;
+      font-size: 22px; border-radius: 12px;
+      background: linear-gradient(140deg, rgba(34,211,238,0.16), rgba(52,211,153,0.16));
+      border: 1px solid var(--line-2);
+      box-shadow: 0 0 22px rgba(34, 211, 238, 0.12);
+    }
+    .brand { min-width: 0; }
+    .brand h1 { margin: 0; font-size: 17px; letter-spacing: 3.5px; font-weight: 800; }
+    .brand small { display: block; color: var(--muted); font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; margin-top: 1px; }
+    .topline { margin-left: auto; display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .topline .reason { color: var(--soft); font-family: var(--mono); font-size: 12px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .clock { color: var(--muted); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+    .state {
+      flex: none; display: inline-flex; align-items: center; gap: 9px;
+      padding: 8px 16px; border-radius: 999px; font-weight: 800; letter-spacing: 1.6px; font-size: 13px;
+    }
+    .state .beacon { width: 9px; height: 9px; border-radius: 50%; }
+    .state.ok { color: var(--ok); background: var(--ok-dim); border: 1px solid rgba(52,211,153,0.35); }
+    .state.ok .beacon { background: var(--ok); box-shadow: 0 0 10px var(--ok); animation: pulse 2.4s ease-in-out infinite; }
+    .state.warn { color: var(--warn); background: var(--warn-dim); border: 1px solid rgba(251,191,36,0.35); }
+    .state.warn .beacon { background: var(--warn); box-shadow: 0 0 10px var(--warn); }
+    @keyframes pulse { 50% { opacity: 0.45; } }
+
+    /* ── KPI strip ───────────────────────────────────────────────────────── */
+    .kpis {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px; margin-bottom: 12px;
+    }
+    .kpi {
+      display: flex; flex-direction: column; gap: 5px;
+      padding: 12px 14px; border-radius: 14px;
+      background: var(--card); border: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+      transition: border-color 0.25s;
+    }
+    .kpi:hover { border-color: var(--line-2); }
+    .kpi label { color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
+    .kpi strong { font-family: var(--mono); font-size: 19px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .kpi.ok strong { color: var(--ok); }
+    .kpi.warn strong { color: var(--warn); }
+    .kpi.bad strong { color: var(--bad); }
+    .kpi.accent strong { color: var(--accent); }
+
+    /* ── card grid ───────────────────────────────────────────────────────── */
+    .deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      padding: 16px 18px; backdrop-filter: blur(8px);
+      transition: border-color 0.25s;
+      min-width: 0;
+    }
+    .card:hover { border-color: var(--line-2); }
+    .card > h2 {
+      display: flex; align-items: center; gap: 9px;
+      margin: 0 0 12px; font-size: 12px; font-weight: 800;
+      letter-spacing: 1.6px; text-transform: uppercase; color: var(--soft);
+    }
+    .card > h2::before {
+      content: ""; width: 8px; height: 8px; border-radius: 3px;
+      background: linear-gradient(140deg, var(--accent), var(--ok));
+    }
+    .rows { display: flex; flex-direction: column; }
+    .row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 13px;
+    }
+    .row:last-child { border-bottom: none; }
+    .row .k { color: var(--soft); }
+    .row .v { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(52,211,153,0.55); }
+    .dot.warn { background: var(--warn); box-shadow: 0 0 8px rgba(251,191,36,0.55); }
+    .dot.bad { background: var(--bad); box-shadow: 0 0 8px rgba(248,113,113,0.55); }
+
+    /* threat tiles */
+    .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 10px; }
+    .tile { padding: 11px 13px; border-radius: 12px; background: var(--inset); border: 1px solid var(--line); }
+    .tile label { display: block; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+    .tile strong { display: block; margin-top: 4px; font-family: var(--mono); font-size: 19px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .tile.accent strong { color: var(--accent); }
+    .tile.ok strong { color: var(--ok); }
+
+    /* bars */
+    .meter { margin-bottom: 12px; }
+    .meter:last-child { margin-bottom: 0; }
+    .meter .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    .meter .head span { color: var(--soft); font-size: 12.5px; }
+    .meter .head strong { font-family: var(--mono); font-size: 12px; color: var(--text); font-weight: 600; }
+    .track { height: 7px; border-radius: 99px; background: var(--inset); border: 1px solid var(--line); overflow: hidden; }
+    .fill { width: 0; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--ok)); transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+    .fill.hot { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+
+    /* service + port chips */
+    .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 6px 11px; border-radius: 999px; font-size: 12px;
+      background: var(--inset); border: 1px solid var(--line); color: var(--soft);
+      font-family: var(--mono);
+    }
+    .chip .dot { width: 7px; height: 7px; }
+    .portchip { flex-direction: column; align-items: flex-start; gap: 2px; border-radius: 12px; padding: 9px 12px; }
+    .portchip .port { color: var(--accent); font-weight: 700; }
+    .portchip .desc { color: var(--muted); font-size: 11px; font-family: system-ui, sans-serif; }
+    .portchip .scope { color: var(--ok); font-size: 10px; letter-spacing: 1px; }
+
+    footer {
+      margin-top: 14px; display: flex; justify-content: space-between; gap: 10px;
+      color: var(--muted); font-size: 11.5px; font-family: var(--mono);
+    }
+
+    /* ── adaptive scaling ────────────────────────────────────────────────── */
+    @media (min-width: 1500px) { html { zoom: 1.08; } }
+    @media (min-width: 1800px) { html { zoom: 1.18; } }
+    @media (min-width: 1800px) and (min-height: 1150px) { html { zoom: 1.32; } }
+    @media (min-width: 2300px) { html { zoom: 1.45; } }
+    @media (min-width: 2300px) and (min-height: 1500px) { html { zoom: 1.65; } }
+    @media (min-width: 3200px) { html { zoom: 1.95; } }
+    @media (max-width: 760px) {
+      main { width: min(1720px, 100% - 14px); padding-top: 8px; }
+      .topbar { flex-wrap: wrap; gap: 10px; padding: 12px 14px; }
+      .topline { margin-left: 0; width: 100%; justify-content: space-between; }
+      .topline .reason { display: none; }
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .kpi { padding: 10px 12px; }
+      .kpi strong { font-size: 16px; }
+      .deck { grid-template-columns: 1fr; gap: 10px; }
+      footer { flex-direction: column; align-items: center; }
+    }
   </style>
 </head>
 <body>
   <main>
-    <header>
-      <div class="masthead">
-        <h1>NFT Firewall</h1>
-        <div class="subtitle" id="reason">{html.escape(reason)}</div>
+    <header class="topbar">
+      <div class="sigil">&#128737;</div>
+      <div class="brand">
+        <h1>NFT FIREWALL</h1>
+        <small>command deck &middot; read-only</small>
       </div>
-      <div class="status-card {status_class}">
-        <span class="eyebrow">Firewall State</span>
-        <strong id="status">{html.escape(status)}</strong>
+      <div class="topline">
+        <span class="reason" id="reason">__REASON__</span>
+        <span class="clock" id="clock"></span>
+        <span class="state __STATUS_CLASS__" id="stateBox"><i class="beacon"></i><span id="status">__STATUS__</span></span>
       </div>
     </header>
-    <section class="metrics">
-      <section class="metric"><span>VPN</span><strong id="vpnIp">checking</strong></section>
-      <section class="metric"><span>Handshake</span><strong id="handshake">{html.escape(f"{handshake}s" if isinstance(handshake, int) else str(handshake))}</strong></section>
-      <section class="metric {html.escape('ok' if markers == 'ok' else 'warn')}"><span>Markers</span><strong id="markers">{html.escape(str(markers))}</strong></section>
-      <section class="metric {html.escape('ok' if nft_integrity == 'intact' else 'warn')}"><span>NFT Rules</span><strong id="nftRules">{html.escape(nft_integrity)}</strong></section>
-      <section class="metric {html.escape('ok' if persisted == 'ok' else 'warn')}"><span>Persisted Rules</span><strong id="persistedRules">{html.escape(str(persisted))}</strong></section>
+
+    <section class="kpis">
+      <div class="kpi" id="kVpnBox"><label>VPN Tunnel</label><strong id="kVpn">&hellip;</strong></div>
+      <div class="kpi" id="kHandshakeBox"><label>Handshake</label><strong id="kHandshake">&hellip;</strong></div>
+      <div class="kpi" id="kKillswitchBox"><label>Killswitch</label><strong id="kKillswitch">&hellip;</strong></div>
+      <div class="kpi" id="kRulesBox"><label>NFT Rules</label><strong id="kRules">&hellip;</strong></div>
+      <div class="kpi accent"><label>Blocked IPs</label><strong id="kBlocked">&hellip;</strong></div>
+      <div class="kpi accent"><label>Packets Denied</label><strong id="kDrops">&hellip;</strong></div>
     </section>
-    <section class="layout">
-      <div class="main-content">
-        <section class="panel">
-          <div class="report-header">
-            <div>
-              <h3 id="briefTitle">Good Morning — Firewall Brief</h3>
-              <p><span id="briefDate">loading</span></p>
-            </div>
-            <span class="pill {status_class}" id="briefStatus">{html.escape(status)}</span>
-          </div>
-          <div class="report-grid">
-            <div class="report-section">
-              <h4>Network & Security</h4>
-              <ul class="report-list">
-                <li><span>VPN</span> <span class="status-indicator"><i id="vpnDot" class="dot green"></i> <span id="vpnState">hidden</span></span></li>
-                <li><span>Handshake</span> <span class="status-indicator"><i id="handshakeDot" class="dot green"></i> <span id="handshakeBrief">loading</span></span></li>
-                <li><span>Killswitch</span> <span class="status-indicator"><i id="markerDot" class="dot green"></i> <span id="markerBrief">loading</span></span></li>
-                <li><span>NFT Rules</span> <span class="status-indicator"><i id="nftDot" class="dot green"></i> <span id="nftBrief">loading</span></span></li>
-                <li><span>Persisted Rules</span> <span class="status-indicator"><i id="persistedDot" class="dot green"></i> <span id="persistedBrief">loading</span></span></li>
-              </ul>
-            </div>
-            <div class="report-section">
-              <h4>Docker & Daemons</h4>
-              <ul class="report-list" id="daemonBriefRows">
-                <li><span>Services</span><span>loading</span></li>
-              </ul>
-            </div>
-            <div class="report-section wide">
-              <h4>Exposed Ports Overview</h4>
-              <ul class="report-list port-list" id="briefPortRows">
-                <li><span>loading</span><span></span></li>
-              </ul>
-            </div>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="report-header">
-            <div>
-              <h3>Threat Overview</h3>
-              <p><span id="threatMeta">live nftables counters</span></p>
-            </div>
-          </div>
-          <section class="threat-metrics">
-            <section class="metric"><span>Blocked IPs</span><strong id="tBlocked" class="numeric">--</strong></section>
-            <section class="metric"><span>Trusted IPs</span><strong id="tTrusted" class="numeric">--</strong></section>
-            <section class="metric"><span>Geo Allowlist</span><strong id="tGeo" class="numeric">--</strong></section>
-            <section class="metric"><span>Packets Denied</span><strong id="tDrops" class="numeric">--</strong></section>
-          </section>
-          <div class="report-grid">
-            <div class="report-section">
-              <h4>SSH Auto-bans</h4>
-              <ul class="report-list">
-                <li><span>This week</span><span id="tBansWeek">--</span></li>
-                <li><span>Last week</span><span id="tBansLast">--</span></li>
-              </ul>
-            </div>
-            <div class="report-section">
-              <h4>Top Attacking Countries</h4>
-              <ul class="report-list" id="tCountries">
-                <li><span>none recorded</span><span></span></li>
-              </ul>
-            </div>
-          </div>
-        </section>
-      </div>
-      <aside class="side">
-        <section class="panel">
-          <h2>Live System</h2>
-          <div class="bars">
-            <div class="bar-row">
-              <div class="bar-head"><span>CPU</span><strong id="cpuText">warming up</strong></div>
-              <div class="track"><div class="fill" id="cpuBar"></div></div>
-            </div>
-            <div class="bar-row">
-              <div class="bar-head"><span>Memory</span><strong id="memText">--</strong></div>
-              <div class="track"><div class="fill" id="memBar"></div></div>
-            </div>
-            <div class="bar-row">
-              <div class="bar-head"><span>Disk /</span><strong id="diskText">--</strong></div>
-              <div class="track"><div class="fill" id="diskBar"></div></div>
-            </div>
-          </div>
-        </section>
-        <section class="panel">
-          <h2>Network Throughput</h2>
-          <table>
-            <thead><tr><th>Interface</th><th>RX</th><th>TX</th></tr></thead>
-            <tbody id="networkRows"><tr><td colspan="3">warming up</td></tr></tbody>
-          </table>
-        </section>
-        <section class="panel">
-          <h2>Core Services</h2>
-          <table>
-            <thead><tr><th>Service</th><th>State</th></tr></thead>
-            <tbody id="serviceRows"></tbody>
-          </table>
-        </section>
-      </aside>
+
+    <section class="deck">
+      <section class="card">
+        <h2>Security Posture</h2>
+        <div class="rows">
+          <div class="row"><span class="k">VPN tunnel</span><span class="v"><i class="dot ok" id="dVpn"></i><span id="rVpn">&hellip;</span></span></div>
+          <div class="row"><span class="k">Handshake</span><span class="v"><i class="dot ok" id="dHandshake"></i><span id="rHandshake">&hellip;</span></span></div>
+          <div class="row"><span class="k">Killswitch markers</span><span class="v"><i class="dot ok" id="dMarkers"></i><span id="rMarkers">&hellip;</span></span></div>
+          <div class="row"><span class="k">Live ruleset</span><span class="v"><i class="dot ok" id="dRules"></i><span id="rRules">&hellip;</span></span></div>
+          <div class="row"><span class="k">Persisted ruleset</span><span class="v"><i class="dot ok" id="dPersisted"></i><span id="rPersisted">&hellip;</span></span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Threat Overview</h2>
+        <div class="tiles">
+          <div class="tile"><label>Blocked IPs</label><strong id="tBlocked">--</strong></div>
+          <div class="tile"><label>Trusted IPs</label><strong id="tTrusted">--</strong></div>
+          <div class="tile accent"><label>Geo Allowlist</label><strong id="tGeo">--</strong></div>
+          <div class="tile accent"><label>Packets Denied</label><strong id="tDrops">--</strong></div>
+        </div>
+        <div class="rows">
+          <div class="row"><span class="k">Auto-bans this week</span><span class="v" id="tBansWeek">--</span></div>
+          <div class="row"><span class="k">Auto-bans last week</span><span class="v" id="tBansLast">--</span></div>
+        </div>
+        <div class="rows" id="tCountries"></div>
+      </section>
+
+      <section class="card">
+        <h2>Live System</h2>
+        <div class="meter">
+          <div class="head"><span>CPU</span><strong id="cpuText">&hellip;</strong></div>
+          <div class="track"><div class="fill" id="cpuBar"></div></div>
+        </div>
+        <div class="meter">
+          <div class="head"><span>Memory</span><strong id="memText">&hellip;</strong></div>
+          <div class="track"><div class="fill" id="memBar"></div></div>
+        </div>
+        <div class="meter">
+          <div class="head"><span>Disk /</span><strong id="diskText">&hellip;</strong></div>
+          <div class="track"><div class="fill" id="diskBar"></div></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Network Throughput</h2>
+        <div class="rows" id="netRows"><div class="row"><span class="k">warming up</span><span class="v"></span></div></div>
+      </section>
+
+      <section class="card">
+        <h2>Daemons</h2>
+        <div class="chips" id="serviceChips"></div>
+      </section>
+
+      <section class="card">
+        <h2>Exposed Ports Overview</h2>
+        <div class="chips" id="portChips"></div>
+      </section>
     </section>
-    <footer>Last refresh: <span id="updated">initial</span></footer>
+
+    <footer>
+      <span>nft-firewall &middot; localhost:8787 behind Cosmos SSO</span>
+      <span>refreshed <span id="updated">&hellip;</span></span>
+    </footer>
   </main>
   <script>
-    const redactIps = (value) => String(value || "").replace(/\\b(?:\\d{{1,3}}\\.){{3}}\\d{{1,3}}\\b/g, "hidden");
-    const fmtBytes = (value) => {{
-      if (value === null || value === undefined) return "--";
+    const $ = (id) => document.getElementById(id);
+    const redactIps = (v) => String(v || "").replace(/\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b/g, "hidden");
+    const num = (v) => v === null || v === undefined ? "--"
+      : Number(v) >= 100000
+        ? new Intl.NumberFormat(undefined, {notation: "compact", maximumFractionDigits: 1}).format(Number(v))
+        : Number(v).toLocaleString();
+    const fmtBytes = (v) => {
+      if (v === null || v === undefined) return "--";
       const units = ["B", "KB", "MB", "GB", "TB"];
-      let n = Number(value), i = 0;
-      while (n >= 1024 && i < units.length - 1) {{ n /= 1024; i++; }}
-      return `${{n >= 10 || i === 0 ? n.toFixed(0) : n.toFixed(1)}} ${{units[i]}}`;
-    }};
-    const fmtRate = (value) => value === null || value === undefined ? "warming" : `${{fmtBytes(value)}}/s`;
-    const setBar = (id, pct) => {{
-      const el = document.getElementById(id);
-      el.style.width = `${{Math.max(0, Math.min(100, Number(pct || 0)))}}%`;
-    }};
-    const pillClass = (state) => state === "active" ? "ok" : (state === "inactive" || state === "unknown" ? "warn" : "bad");
-    const dotClass = (ok) => `dot ${{ok ? "green" : "red"}}`;
-    const serviceLabel = (name) => name.replace(".service", "");
-    const serviceOk = (row) => row.state === "active" || (row.name === "docker.service" && row.state === "inactive");
-    const briefName = (name) => {{
-      const n = serviceLabel(name);
-      if (n === "nft-watchdog") return "Watchdog";
-      if (n === "nft-listener") return "Listener";
-      if (n === "nft-ssh-alert") return "SSH Alert";
-      if (n === "CosmosCloud") return "Cosmos";
-      if (n === "docker") return "Docker";
-      return n;
-    }};
-    async function refresh() {{
-      const res = await fetch("/api/dashboard", {{cache: "no-store"}});
+      let n = Number(v), i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return `${n >= 10 || i === 0 ? n.toFixed(0) : n.toFixed(1)} ${units[i]}`;
+    };
+    const fmtRate = (v) => v === null || v === undefined ? "&#8943;" : `${fmtBytes(v)}/s`;
+    const setBar = (id, pct) => {
+      const el = $(id);
+      const p = Math.max(0, Math.min(100, Number(pct || 0)));
+      el.style.width = `${p}%`;
+      el.classList.toggle("hot", p >= 85);
+    };
+    const setDotRow = (dotId, rowId, ok, text) => {
+      $(dotId).className = `dot ${ok ? "ok" : "bad"}`;
+      $(rowId).textContent = text;
+    };
+    const setKpi = (boxId, valueId, ok, text) => {
+      $(boxId).className = `kpi ${ok ? "ok" : "bad"}`;
+      $(valueId).textContent = text;
+    };
+    const svcName = (n) => n.replace(".service", "").replace("wg-quick@", "wg:");
+    const svcOk = (row) => row.state === "active" || (row.name === "docker.service" && row.state === "inactive");
+    let lastData = 0;
+
+    async function refresh() {
+      const res = await fetch("/api/dashboard", {cache: "no-store"});
       const data = await res.json();
-      const h = data.health || {{}};
-      const s = data.system || {{}};
-      document.getElementById("status").textContent = h.status || "UNKNOWN";
-      document.getElementById("reason").textContent = (h.status || "").toUpperCase() === "HEALTHY"
-        ? `VPN up · handshake ${{h.handshake_age_s ?? "--"}}s ago · all rules intact`
-        : redactIps(h.reason || "No reason reported");
-      document.querySelector(".status-card").className = `status-card ${{(h.status || "").toUpperCase() === "HEALTHY" ? "ok" : "warn"}}`;
-      document.getElementById("briefStatus").textContent = h.status || "UNKNOWN";
-      document.getElementById("briefStatus").className = `pill ${{(h.status || "").toUpperCase() === "HEALTHY" ? "ok" : "warn"}}`;
-      document.getElementById("briefDate").textContent = new Date().toLocaleString(undefined, {{weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"}});
-      document.getElementById("vpnIp").textContent = h.vpn_ip ? "Connected" : "Down";
-      document.getElementById("handshake").textContent = h.handshake_age_s === null || h.handshake_age_s === undefined ? "--" : `${{h.handshake_age_s}}s`;
-      document.getElementById("markers").textContent = h.markers || "--";
-      document.getElementById("nftRules").textContent = h.nft_integrity ? "intact" : "check";
-      document.getElementById("persistedRules").textContent = h.persisted_ruleset_integrity || "unknown";
-      document.getElementById("vpnState").textContent = h.vpn_ip ? "Connected" : "Down";
-      document.getElementById("vpnDot").className = dotClass(Boolean(h.vpn_ip));
-      document.getElementById("handshakeDot").className = dotClass((h.handshake_age_s ?? 999) < 150);
-      document.getElementById("handshakeBrief").textContent = h.handshake_age_s === null || h.handshake_age_s === undefined ? "unknown" : `${{h.handshake_age_s}}s ago`;
-      document.getElementById("markerBrief").textContent = h.markers === "ok" ? "Active" : (h.markers || "check");
-      document.getElementById("nftBrief").textContent = h.nft_integrity ? "Intact" : "Check";
-      document.getElementById("persistedBrief").textContent = h.persisted_ruleset_integrity || "unknown";
-      document.getElementById("markerDot").className = dotClass(h.markers === "ok");
-      document.getElementById("nftDot").className = dotClass(Boolean(h.nft_integrity));
-      document.getElementById("persistedDot").className = dotClass(h.persisted_ruleset_integrity === "ok");
+      const h = data.health || {};
+      const s = data.system || {};
+      const t = data.threat || {};
+      lastData = Date.now();
 
-      const cpu = (s.cpu || {{}});
+      const healthy = (h.status || "").toUpperCase() === "HEALTHY";
+      $("status").textContent = h.status || "UNKNOWN";
+      $("stateBox").className = `state ${healthy ? "ok" : "warn"}`;
+      $("reason").textContent = healthy
+        ? `vpn up &middot; handshake ${h.handshake_age_s ?? "--"}s &middot; rules intact`.replaceAll("&middot;", "\u00b7")
+        : redactIps(h.reason || "");
+
+      const hsFresh = (h.handshake_age_s ?? 999) < 150;
+      setKpi("kVpnBox", "kVpn", Boolean(h.vpn_ip), h.vpn_ip ? "ONLINE" : "DOWN");
+      setKpi("kHandshakeBox", "kHandshake", hsFresh, h.handshake_age_s === null || h.handshake_age_s === undefined ? "--" : `${h.handshake_age_s}s`);
+      setKpi("kKillswitchBox", "kKillswitch", h.markers === "ok", h.markers === "ok" ? "ARMED" : String(h.markers || "check").toUpperCase());
+      setKpi("kRulesBox", "kRules", Boolean(h.nft_integrity), h.nft_integrity ? "INTACT" : "CHECK");
+      $("kBlocked").textContent = num(t.blocked);
+      $("kDrops").textContent = num(t.drops);
+
+      setDotRow("dVpn", "rVpn", Boolean(h.vpn_ip), h.vpn_ip ? "connected" : "down");
+      setDotRow("dHandshake", "rHandshake", hsFresh, h.handshake_age_s === null || h.handshake_age_s === undefined ? "unknown" : `${h.handshake_age_s}s ago`);
+      setDotRow("dMarkers", "rMarkers", h.markers === "ok", h.markers === "ok" ? "armed" : String(h.markers || "check"));
+      setDotRow("dRules", "rRules", Boolean(h.nft_integrity), h.nft_integrity ? "intact" : "check");
+      setDotRow("dPersisted", "rPersisted", h.persisted_ruleset_integrity === "ok", String(h.persisted_ruleset_integrity || "unknown"));
+
+      $("tBlocked").textContent = num(t.blocked);
+      $("tTrusted").textContent = num(t.trusted);
+      $("tGeo").textContent = num(t.geo_allow);
+      $("tDrops").textContent = num(t.drops);
+      $("tBansWeek").textContent = num(t.bans_week);
+      $("tBansLast").textContent = num(t.bans_last_week);
+      $("tCountries").innerHTML = (t.top_countries || []).map(row =>
+        `<div class="row"><span class="k">${row.flag || ""} ${row.cc} attacks blocked</span><span class="v">${num(row.count)}</span></div>`
+      ).join("") || `<div class="row"><span class="k">attacking countries</span><span class="v">none recorded</span></div>`;
+
+      const cpu = s.cpu || {};
       const cpuPct = cpu.percent ?? ((cpu.load_ratio || 0) * 100);
-      document.getElementById("cpuText").textContent = cpu.percent === null || cpu.percent === undefined
-        ? `load ${{cpu.load?.one ?? "--"}} / ${{cpu.cores ?? "--"}} cores`
-        : `${{cpu.percent.toFixed(1)}}%`;
+      $("cpuText").textContent = cpu.percent === null || cpu.percent === undefined
+        ? `load ${cpu.load?.one ?? "--"} / ${cpu.cores ?? "--"} cores`
+        : `${cpu.percent.toFixed(1)}% \u00b7 ${cpu.cores ?? "--"} cores`;
       setBar("cpuBar", cpuPct);
-
-      const mem = s.memory || {{}};
-      document.getElementById("memText").textContent = `${{mem.percent ?? "--"}}%  ${{fmtBytes(mem.used)}} / ${{fmtBytes(mem.total)}}`;
+      const mem = s.memory || {};
+      $("memText").textContent = `${mem.percent ?? "--"}% \u00b7 ${fmtBytes(mem.used)} / ${fmtBytes(mem.total)}`;
       setBar("memBar", mem.percent);
-
-      const disk = s.disk || {{}};
-      document.getElementById("diskText").textContent = `${{disk.percent ?? "--"}}%  ${{fmtBytes(disk.used)}} / ${{fmtBytes(disk.total)}}`;
+      const disk = s.disk || {};
+      $("diskText").textContent = `${disk.percent ?? "--"}% \u00b7 ${fmtBytes(disk.used)} / ${fmtBytes(disk.total)}`;
       setBar("diskBar", disk.percent);
 
-      document.getElementById("networkRows").innerHTML = (s.network || []).map(row =>
-        `<tr><td><code>${{row.iface}}</code></td><td>${{fmtRate(row.rx_rate)}}</td><td>${{fmtRate(row.tx_rate)}}</td></tr>`
-      ).join("") || "<tr><td colspan=\\"3\\">No interface data</td></tr>";
+      $("netRows").innerHTML = (s.network || []).map(row =>
+        `<div class="row"><span class="v">${row.iface}</span><span class="v">&#8595; ${fmtRate(row.rx_rate)} &nbsp; &#8593; ${fmtRate(row.tx_rate)}</span></div>`
+      ).join("") || `<div class="row"><span class="k">no interface data</span><span class="v"></span></div>`;
 
-      document.getElementById("briefPortRows").innerHTML = (s.ports || []).map(row =>
-        `<li><div class="port-line"><code>${{row.port}}/${{row.proto}}</code><span class="pill">${{row.scope}}</span></div><span class="port-label">${{row.label || "configured"}}</span></li>`
-      ).join("") || "<li><span>No configured ports</span><span></span></li>";
-
-      document.getElementById("serviceRows").innerHTML = (s.services || []).map(row =>
-        `<tr><td>${{serviceLabel(row.name)}}</td><td><span class="pill ${{pillClass(row.state)}}">${{row.state}}</span></td></tr>`
+      $("serviceChips").innerHTML = (s.services || []).map(row =>
+        `<span class="chip"><i class="dot ${svcOk(row) ? "ok" : "bad"}"></i>${svcName(row.name)}</span>`
       ).join("");
-      document.getElementById("daemonBriefRows").innerHTML = (s.services || [])
-        .filter(row => ["nft-watchdog.service", "nft-listener.service", "nft-ssh-alert.service", "CosmosCloud.service", "docker.service"].includes(row.name))
-        .map(row => `<li><span>${{briefName(row.name)}}</span><span class="status-indicator"><i class="${{dotClass(serviceOk(row))}}"></i> ${{row.state}}</span></li>`)
-        .join("") || "<li><span>Services</span><span>unknown</span></li>";
 
-      const t = data.threat || {{}};
-      const num = (v) => v === null || v === undefined ? "--"
-        : Number(v) >= 100000
-          ? new Intl.NumberFormat(undefined, {{notation: "compact", maximumFractionDigits: 1}}).format(Number(v))
-          : Number(v).toLocaleString();
-      document.getElementById("tBlocked").textContent = num(t.blocked);
-      document.getElementById("tTrusted").textContent = num(t.trusted);
-      document.getElementById("tGeo").textContent = num(t.geo_allow);
-      document.getElementById("tDrops").textContent = num(t.drops);
-      document.getElementById("tBansWeek").textContent = num(t.bans_week);
-      document.getElementById("tBansLast").textContent = num(t.bans_last_week);
-      document.getElementById("tCountries").innerHTML = (t.top_countries || []).map(row =>
-        `<li><span>${{row.flag || ""}} ${{row.cc}}</span><span>${{num(row.count)}} blocked</span></li>`
-      ).join("") || "<li><span>none recorded</span><span></span></li>";
+      $("portChips").innerHTML = (s.ports || []).map(row =>
+        `<span class="chip portchip"><span><span class="port">${row.port}/${row.proto}</span> <span class="scope">${row.scope}</span></span><span class="desc">${row.label || "configured"}</span></span>`
+      ).join("") || `<span class="chip">no configured ports</span>`;
 
-      document.getElementById("updated").textContent = new Date().toLocaleTimeString();
-    }}
+      $("updated").textContent = "just now";
+    }
+    setInterval(() => {
+      $("clock").textContent = new Date().toLocaleString(undefined, {weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit"});
+      if (lastData) {
+        const age = Math.round((Date.now() - lastData) / 1000);
+        $("updated").textContent = age <= 2 ? "just now" : `${age}s ago`;
+      }
+    }, 1000);
     refresh().catch(console.error);
     setInterval(() => refresh().catch(console.error), 2000);
   </script>
 </body>
 </html>
 """
+
+
+def render_dashboard(data: dict[str, Any]) -> str:
+    """Render the read-only command-deck dashboard shell.
+
+    All live values are filled client-side from /api/dashboard; the shell only
+    interpolates initial status text (IP-redacted) so a no-JS request still
+    reveals nothing sensitive.
+    """
+    health = data.get("health") or {}
+    status = str(health.get("status", "UNKNOWN"))
+    reason = _hide_ips(health.get("reason", ""))
+    return (
+        _PAGE_TEMPLATE
+        .replace("__STATUS_CLASS__", _status_class(status))
+        .replace("__STATUS__", html.escape(status))
+        .replace("__REASON__", html.escape(reason))
+    )
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
