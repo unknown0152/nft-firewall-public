@@ -72,9 +72,11 @@ def test_keybase_wrapper_sets_login_like_environment():
     assert 'kb_user="${NFT_FIREWALL_KEYBASE_USER:-${config_kb_user:-$default_kb_user}}"' in text
     assert 'Keybase linux_user does not exist: $kb_user' in text
     assert 'kb_uid="$(id -u "$kb_user")"' in text
-    assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' in text
+    assert 'XDG_RUNTIME_DIR="$kb_home/.config"' in text
+    assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' not in text
     assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"' in text
-    assert 'exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/keybase "$@"' in text
+    assert ('exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/env '
+            'XDG_RUNTIME_DIR="$kb_home/.config" /usr/bin/keybase "$@"') in text
     assert 'exec "$runuser_bin" -u "$kb_user" -- env' in text
     assert '/usr/bin/keybase "$@"' in text
     assert 'runuser -l "$kb_user"' not in text
@@ -92,9 +94,11 @@ def test_keybase_one_off_repair_uses_generic_runtime_wrapper():
     assert 'cfg.get("keybase", "linux_user", fallback="").strip()' in text
     assert 'NFT_FIREWALL_KEYBASE_USER' in text
     assert 'NFT_FIREWALL_SYSTEM_USER' in text
-    assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' in text
+    assert 'XDG_RUNTIME_DIR="$kb_home/.config"' in text
+    assert 'XDG_RUNTIME_DIR="/run/user/$kb_uid"' not in text
     assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"' in text
-    assert 'exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/keybase "$@"' in text
+    assert ('exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/env '
+            'XDG_RUNTIME_DIR="$kb_home/.config" /usr/bin/keybase "$@"') in text
     assert 'exec "$runuser_bin" -u "$kb_user" -- env' in text
     assert '/usr/bin/keybase "$@"' in text
     assert 'runuser -l "$kb_user"' not in text

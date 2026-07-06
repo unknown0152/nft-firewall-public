@@ -139,7 +139,7 @@ export HOME="$kb_home"
 export USER="$kb_user"
 export LOGNAME="$kb_user"
 export SHELL="/bin/bash"
-export XDG_RUNTIME_DIR="/run/user/$kb_uid"
+export XDG_RUNTIME_DIR="$kb_home/.config"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$kb_uid/bus"
 export PATH="/usr/local/bin:/usr/bin:/bin"
 
@@ -150,7 +150,7 @@ if [[ ! -x "$sudo_bin" ]]; then
   sudo_bin="$(command -v sudo || true)"
 fi
 if [[ -n "$sudo_bin" ]]; then
-  exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/keybase "$@"
+  exec "$sudo_bin" -iu "$kb_user" -- /usr/bin/env XDG_RUNTIME_DIR="$kb_home/.config" /usr/bin/keybase "$@"
 fi
 
 runuser_bin="/usr/sbin/runuser"

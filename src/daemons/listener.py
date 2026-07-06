@@ -335,8 +335,15 @@ class KeybaseListener:
                 sender = msg.get("sender", {}).get("username", "")
                 
                 # CRITICAL: Ignore our own messages to prevent loops (local echo)
+                # Must go through the sudo wrapper — this daemon's user has no
+                # Keybase session of its own, so a bare `keybase whoami` fails.
                 try:
-                    if sender == subprocess.check_output(["keybase", "whoami"], text=True).strip():
+                    if getattr(self, "_own_username", None) is None:
+                        self._own_username = subprocess.check_output(
+                            self._kb_prefix(cfg) + ["whoami"],
+                            text=True, timeout=20, stderr=subprocess.DEVNULL,
+                        ).strip()
+                    if sender == self._own_username:
                         continue
                 except: pass
 
