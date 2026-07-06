@@ -276,7 +276,32 @@ def save_persistent_sets(sets: dict[str, list[str]], path: Path = _SETS_STATE_FI
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)
-    path.chmod(0o600)
+    _relax_for_daemon_group(path)
+
+
+_DAEMON_GROUP = "fw-admin"
+
+
+def _relax_for_daemon_group(path: Path) -> None:
+    """Make *path* group-readable by the daemon account.
+
+    The dynamic-sets file is written both by fw-admin (interactive !block) and
+    by root (sudo apply / geoblock reapply). A 0600 root-owned file would lock
+    the fw-admin webui/report daemons out, so set group ownership to the daemon
+    group and mode 0640. Best-effort: chown to a group we don't belong to fails
+    for a non-root writer, which is fine — an fw-admin-written file is already
+    readable by fw-admin.
+    """
+    try:
+        import grp
+        gid = grp.getgrnam(_DAEMON_GROUP).gr_gid
+        os.chown(path, -1, gid)
+        path.chmod(0o640)
+    except (KeyError, PermissionError, OSError):
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
 
 
 def persist_set_member(set_name: str, ip: str, *, present: bool) -> None:

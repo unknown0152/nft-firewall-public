@@ -380,19 +380,29 @@ def _threat_stats() -> dict[str, Any]:
     except Exception:
         pass
     try:
-        from utils.analytics import (
-            country_flag,
-            country_leaderboard,
-            total_drop_packets,
-            weekly_ban_counts,
-        )
+        from utils.analytics import total_drop_packets, weekly_ban_counts
         out["drops"] = total_drop_packets()
         this_week, last_week = weekly_ban_counts()
         out["bans_week"], out["bans_last_week"] = this_week, last_week
-        out["top_countries"] = [
-            {"count": row[0], "cc": row[1], "flag": country_flag(row[1])}
-            for row in country_leaderboard(4)
-        ]
+    except Exception:
+        pass
+    # "Top attackers" = the IPs the SSH auto-ban actually caught (real attack
+    # data), NOT the bulk country geoblock ranges. Cheap: reads a small JSON
+    # log, no live geo lookups over a 15k-entry block set.
+    try:
+        from utils.analytics import country_flag, read_persistent_ips
+        top: list[dict[str, Any]] = []
+        for entry in read_persistent_ips()[:5]:
+            cc = (entry.get("geo") or "??")[-2:].upper()
+            top.append({"count": entry.get("count", 0), "cc": cc, "flag": country_flag(cc)})
+        out["top_attackers"] = top
+    except Exception:
+        pass
+    # What we deliberately geo-block, straight from config (no lookups).
+    try:
+        cfg = _load_config(_config_path())
+        blocked = cfg.get("geoblock", "blocked_countries", fallback="").split()
+        out["geoblock_countries"] = [c.upper() for c in blocked]
     except Exception:
         pass
     return out
@@ -701,6 +711,9 @@ _PAGE_TEMPLATE = """<!doctype html>
           <div class="row"><span class="k">Auto-bans this week</span><span class="v" id="tBansWeek">--</span></div>
           <div class="row"><span class="k">Auto-bans last week</span><span class="v" id="tBansLast">--</span></div>
         </div>
+        <div class="rows">
+          <div class="row"><span class="k">Geo-blocking</span><span class="v" id="tGeoblock">&hellip;</span></div>
+        </div>
         <div class="rows" id="tCountries"></div>
       </section>
 
@@ -823,9 +836,11 @@ _PAGE_TEMPLATE = """<!doctype html>
       $("tDrops").textContent = num(t.drops);
       $("tBansWeek").textContent = num(t.bans_week);
       $("tBansLast").textContent = num(t.bans_last_week);
-      $("tCountries").innerHTML = (t.top_countries || []).map(row =>
-        `<div class="row"><span class="k">${row.flag || ""} ${row.cc} attacks blocked</span><span class="v">${num(row.count)}</span></div>`
-      ).join("") || `<div class="row"><span class="k">attacking countries</span><span class="v">none recorded</span></div>`;
+      $("tGeoblock").textContent = (t.geoblock_countries || []).length
+        ? t.geoblock_countries.join(" ") : "none";
+      $("tCountries").innerHTML = (t.top_attackers || []).map(row =>
+        `<div class="row"><span class="k">${row.flag || ""} ${row.cc} — auto-banned attacker</span><span class="v">${num(row.count)} hits</span></div>`
+      ).join("") || `<div class="row"><span class="k">auto-banned attackers</span><span class="v">none yet</span></div>`;
 
       $("serviceChips").innerHTML = (s.services || []).map(row =>
         `<span class="chip"><i class="dot ${svcOk(row) ? "ok" : "bad"}"></i>${svcName(row.name)}</span>`

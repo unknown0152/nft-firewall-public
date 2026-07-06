@@ -162,8 +162,16 @@ def country_leaderboard(top_n: int = 5) -> List[Tuple[int, str, str]]:
     if not ips:
         return []
 
+    # Bulk country geoblocks can push the block set into the tens of
+    # thousands; geo-resolving all of them would make hundreds of
+    # rate-limited ip-api calls. Cap the lookup — single-host /32 attacker
+    # blocks (the interesting ones) are preferred over wide CIDR ranges.
+    _LEADERBOARD_MAX = 256
+    singles = [ip for ip in ips if ip.endswith("/32") or "/" not in ip]
+    sample  = (singles or ips)[:_LEADERBOARD_MAX]
+
     # Strip CIDR suffix for lookup, keep original for display
-    lookup_ips = [ip.split("/")[0] for ip in ips]
+    lookup_ips = [ip.split("/")[0] for ip in sample]
     geo        = _geo_batch(lookup_ips)
 
     counts: Dict[str, int] = {}

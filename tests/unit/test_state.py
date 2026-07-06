@@ -87,7 +87,9 @@ def test_load_and_save_persistent_sets_validate_and_normalize(tmp_path, capsys):
     saved = json.loads(out.read_text())
     assert saved["blocked_ips"] == ["203.0.113.4/32"]
     assert saved["trusted_ips"] == []
-    assert oct(out.stat().st_mode & 0o777) == "0o600"
+    # Never world-accessible (owner rw, world none). The group-read bit may be
+    # set so root-written state stays readable by the fw-admin daemon group.
+    assert out.stat().st_mode & 0o606 == 0o600
 
 
 def test_persist_set_member_adds_and_removes(monkeypatch):

@@ -551,7 +551,14 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
 
     if cfg.cosmos_public_ports:
         a("        # Cosmos Cloud reverse-proxy ingress (configured public TCP ports)")
-        a(f"        {VPN} tcp dport {_pset(cfg.cosmos_public_ports)} accept")
+        if cfg.geowhitelist_ips:
+            a("        # LOCKDOWN MODE: ingress gated by the country whitelist; the")
+            a("        # trusted set stays as a travel/override escape hatch (!allow).")
+            a(f"        {VPN} ip saddr @trusted_ips tcp dport {_pset(cfg.cosmos_public_ports)} accept")
+            a(f"        {VPN} ip saddr @geowhitelist_ips tcp dport {_pset(cfg.cosmos_public_ports)} "
+              "accept comment \"Lockdown: Country Whitelist Ingress (VPN)\"")
+        else:
+            a(f"        {VPN} tcp dport {_pset(cfg.cosmos_public_ports)} accept")
         a("")
 
     if cfg.allow_plex_lan:
@@ -657,8 +664,14 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
 
     if cfg.cosmos_public_ports:
         a("        # Cosmos Cloud public reverse-proxy forwarding.")
-        a(f"        {VPN} tcp dport {_pset(cfg.cosmos_public_ports)} "
-          "ip daddr @docker_nets accept")
+        if cfg.geowhitelist_ips:
+            a(f"        {VPN} ip saddr @trusted_ips tcp dport {_pset(cfg.cosmos_public_ports)} "
+              "ip daddr @docker_nets accept")
+            a(f"        {VPN} ip saddr @geowhitelist_ips tcp dport {_pset(cfg.cosmos_public_ports)} "
+              "ip daddr @docker_nets accept comment \"Lockdown: Country Whitelist Forwarding (VPN)\"")
+        else:
+            a(f"        {VPN} tcp dport {_pset(cfg.cosmos_public_ports)} "
+              "ip daddr @docker_nets accept")
         a("")
 
     if allowed_exposed:
