@@ -131,6 +131,65 @@ def _cpu_percore() -> list[float | None]:
     return results
 
 
+_LAST_DISKIO: tuple[float, int, int] | None = None
+
+
+def _disk_io() -> dict[str, Any]:
+    """Aggregate read/write byte rates across whole physical disks."""
+    global _LAST_DISKIO
+    read_sectors = write_sectors = 0
+    try:
+        for line in Path("/proc/diskstats").read_text(encoding="utf-8").splitlines():
+            f = line.split()
+            if len(f) < 10:
+                continue
+            name = f[2]
+            is_whole_nvme = name.startswith("nvme") and "p" not in name.split("n", 2)[-1]
+            is_whole_sd = len(name) == 3 and name.startswith("sd")
+            if not (is_whole_nvme or is_whole_sd):
+                continue
+            read_sectors += int(f[5])
+            write_sectors += int(f[9])
+    except Exception:
+        return {"read_rate": None, "write_rate": None}
+    now = time.monotonic()
+    with _SAMPLE_LOCK:
+        prev = _LAST_DISKIO
+        _LAST_DISKIO = (now, read_sectors, write_sectors)
+    if not prev or now <= prev[0]:
+        return {"read_rate": None, "write_rate": None}
+    dt = now - prev[0]
+    return {
+        "read_rate": round(max(0, read_sectors - prev[1]) * 512 / dt, 1),
+        "write_rate": round(max(0, write_sectors - prev[2]) * 512 / dt, 1),
+    }
+
+
+# nft counter reads go through the sudo shim, so sample them on their own
+# slow clock instead of once per 1 s live poll.
+_DROPS_CACHE: dict[str, Any] = {"t": 0.0, "total": None}
+_DROPS_TTL = 5.0
+
+
+def _drops_sample() -> dict[str, Any]:
+    now = time.time()
+    if now - _DROPS_CACHE["t"] > _DROPS_TTL:
+        try:
+            from utils.analytics import total_drop_packets
+            _DROPS_CACHE["total"] = total_drop_packets()
+        except Exception:
+            pass
+        _DROPS_CACHE["t"] = now
+    return {"total": _DROPS_CACHE["total"], "sampled_at": _DROPS_CACHE["t"]}
+
+
+def _uptime_seconds() -> int | None:
+    try:
+        return int(float(Path("/proc/uptime").read_text().split()[0]))
+    except Exception:
+        return None
+
+
 _LIVE_IFACES: list[str] = []
 
 
@@ -152,6 +211,9 @@ def collect_live() -> dict[str, Any]:
         "memory": _memory_usage(),
         "disk": _disk_usage("/"),
         "network": _network_usage(list(_LIVE_IFACES)),
+        "disk_io": _disk_io(),
+        "drops": _drops_sample(),
+        "uptime": _uptime_seconds(),
     }
 
 
@@ -631,6 +693,10 @@ _PAGE_TEMPLATE = """<!doctype html>
           <div class="tile accent"><label>Geo Allowlist</label><strong id="tGeo">--</strong></div>
           <div class="tile accent"><label>Packets Denied</label><strong id="tDrops">--</strong></div>
         </div>
+        <div class="meter">
+          <div class="head"><span class="legend"><i class="swatch rx"></i>denied / min</span><strong id="dropText">&hellip;</strong></div>
+          <canvas id="dropChart" height="52"></canvas>
+        </div>
         <div class="rows">
           <div class="row"><span class="k">Auto-bans this week</span><span class="v" id="tBansWeek">--</span></div>
           <div class="row"><span class="k">Auto-bans last week</span><span class="v" id="tBansLast">--</span></div>
@@ -664,6 +730,15 @@ _PAGE_TEMPLATE = """<!doctype html>
         <div class="rows" id="netRows"></div>
       </section>
 
+      <section class="card live">
+        <h2>Disk I/O</h2>
+        <div class="meter">
+          <div class="head"><span class="legend"><i class="swatch rx"></i>read &nbsp;<i class="swatch tx"></i>write</span><strong id="ioText">&hellip;</strong></div>
+          <canvas id="ioChart" height="72"></canvas>
+        </div>
+        <div class="rows" id="ioRows"></div>
+      </section>
+
       <section class="card">
         <h2>Daemons</h2>
         <div class="chips" id="serviceChips"></div>
@@ -676,7 +751,7 @@ _PAGE_TEMPLATE = """<!doctype html>
     </section>
 
     <footer>
-      <span>nft-firewall &middot; localhost:8787 behind Cosmos SSO</span>
+      <span>nft-firewall &middot; up <span id="uptime">&hellip;</span> &middot; behind Cosmos SSO</span>
       <span>refreshed <span id="updated">&hellip;</span></span>
     </footer>
   </main>
@@ -807,6 +882,17 @@ _PAGE_TEMPLATE = """<!doctype html>
       return v;
     };
 
+    const dropHist = [];
+    const rdHist = [];
+    const wrHist = [];
+    let lastDrops = null;
+    let dropRate = 0;
+    const fmtUptime = (secs) => {
+      if (secs === null || secs === undefined) return "--";
+      const d = Math.floor(secs / 86400), h = Math.floor(secs % 86400 / 3600), m = Math.floor(secs % 3600 / 60);
+      return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+    };
+
     async function refreshLive() {
       const res = await fetch("/api/live", {cache: "no-store"});
       const s = await res.json();
@@ -850,6 +936,33 @@ _PAGE_TEMPLATE = """<!doctype html>
         {data: rxHist, color: "rgba(34,211,238,1)"},
         {data: txHist, color: "rgba(52,211,153,1)"},
       ], peak);
+      const io = s.disk_io || {};
+      push(rdHist, io.read_rate || 0); push(wrHist, io.write_rate || 0);
+      const ioPeak = niceMax(Math.max(...rdHist, ...wrHist, 1));
+      $("ioText").textContent = `peak ${fmtBytes(ioPeak)}/s`;
+      drawChart($("ioChart"), [
+        {data: rdHist, color: "rgba(34,211,238,1)"},
+        {data: wrHist, color: "rgba(52,211,153,1)"},
+      ], ioPeak);
+      $("ioRows").innerHTML =
+        `<div class="row"><span class="k">read</span><span class="v">${fmtRate(io.read_rate)}</span></div>` +
+        `<div class="row"><span class="k">write</span><span class="v">${fmtRate(io.write_rate)}</span></div>`;
+
+      const dr = s.drops || {};
+      if (dr.total !== null && dr.total !== undefined) {
+        if (lastDrops && dr.sampled_at > lastDrops.sampled_at) {
+          const dt = dr.sampled_at - lastDrops.sampled_at;
+          dropRate = Math.max(0, (dr.total - lastDrops.total) / dt * 60);
+        }
+        if (!lastDrops || dr.sampled_at >= lastDrops.sampled_at) lastDrops = dr;
+      }
+      push(dropHist, dropRate);
+      const dropPeak = Math.max(...dropHist, 10);
+      $("dropText").textContent = `${Math.round(dropRate)} / min`;
+      drawChart($("dropChart"), [{data: dropHist, color: "rgba(248,113,113,1)"}], dropPeak * 1.15);
+
+      $("uptime").textContent = fmtUptime(s.uptime);
+
       $("netRows").innerHTML = net.map(row =>
         `<div class="row"><span class="v">${row.iface}</span><span class="v">&#8595; ${fmtRate(row.rx_rate)} &nbsp; &#8593; ${fmtRate(row.tx_rate)}</span></div>`
       ).join("") || `<div class="row"><span class="k">warming up</span><span class="v"></span></div>`;
