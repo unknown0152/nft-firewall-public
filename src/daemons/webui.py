@@ -484,7 +484,8 @@ def render_dashboard(data: dict[str, Any]) -> str:
       border: 1px solid var(--line);
     }}
     .metric span {{ display: block; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }}
-    .metric strong {{ display: block; margin-top: 10px; font-size: 19px; font-weight: 680; overflow-wrap: anywhere; }}
+    .metric strong {{ display: block; margin-top: 10px; font-size: 19px; font-weight: 680; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }}
+    .metric strong.numeric {{ overflow-wrap: normal; white-space: nowrap; }}
     .metric.ok strong {{ color: var(--green); }}
     .metric.warn strong {{ color: var(--yellow); }}
     .layout {{
@@ -621,13 +622,22 @@ def render_dashboard(data: dict[str, Any]) -> str:
     @media (max-width: 1000px) {{
       .layout {{ grid-template-columns: 1fr; }}
       .metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .threat-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .status-card {{ width: 100%; text-align: left; }}
     }}
     @media (max-width: 640px) {{
-      main {{ width: min(100% - 20px, 1360px); padding-top: 10px; }}
-      .metrics {{ grid-template-columns: 1fr; }}
+      main {{ width: min(100% - 16px, 1360px); padding-top: 8px; }}
+      header {{ flex-direction: column; align-items: stretch; gap: 10px; }}
+      h1 {{ font-size: 24px; }}
+      .metrics, .threat-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
+      .metric {{ min-height: 0; padding: 10px 12px; }}
+      .metric span {{ font-size: 10px; }}
+      .metric strong, .threat-metrics .metric strong {{ margin-top: 6px; font-size: 16px; }}
+      .panel {{ padding: 14px; }}
       .report-header {{ display: block; }}
       .port-list {{ grid-template-columns: 1fr; }}
+      .status-card strong {{ font-size: 22px; }}
+      footer {{ text-align: center; }}
     }}
   </style>
 </head>
@@ -693,10 +703,10 @@ def render_dashboard(data: dict[str, Any]) -> str:
             </div>
           </div>
           <section class="threat-metrics">
-            <section class="metric"><span>Blocked IPs</span><strong id="tBlocked">--</strong></section>
-            <section class="metric"><span>Trusted IPs</span><strong id="tTrusted">--</strong></section>
-            <section class="metric"><span>Geo Allowlist</span><strong id="tGeo">--</strong></section>
-            <section class="metric"><span>Packets Denied</span><strong id="tDrops">--</strong></section>
+            <section class="metric"><span>Blocked IPs</span><strong id="tBlocked" class="numeric">--</strong></section>
+            <section class="metric"><span>Trusted IPs</span><strong id="tTrusted" class="numeric">--</strong></section>
+            <section class="metric"><span>Geo Allowlist</span><strong id="tGeo" class="numeric">--</strong></section>
+            <section class="metric"><span>Packets Denied</span><strong id="tDrops" class="numeric">--</strong></section>
           </section>
           <div class="report-grid">
             <div class="report-section">
@@ -839,7 +849,10 @@ def render_dashboard(data: dict[str, Any]) -> str:
         .join("") || "<li><span>Services</span><span>unknown</span></li>";
 
       const t = data.threat || {{}};
-      const num = (v) => v === null || v === undefined ? "--" : Number(v).toLocaleString();
+      const num = (v) => v === null || v === undefined ? "--"
+        : Number(v) >= 100000
+          ? new Intl.NumberFormat(undefined, {{notation: "compact", maximumFractionDigits: 1}}).format(Number(v))
+          : Number(v).toLocaleString();
       document.getElementById("tBlocked").textContent = num(t.blocked);
       document.getElementById("tTrusted").textContent = num(t.trusted);
       document.getElementById("tGeo").textContent = num(t.geo_allow);
