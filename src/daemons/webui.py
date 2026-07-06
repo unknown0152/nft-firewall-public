@@ -245,6 +245,61 @@ def _open_ports(cfg: configparser.ConfigParser) -> list[dict[str, Any]]:
     return rows
 
 
+_SETS_FILE = Path("/var/lib/nft-firewall/dynamic-sets.json")
+
+
+def _threat_stats() -> dict[str, Any]:
+    """Read-only threat posture snapshot.
+
+    Set counts come from the persisted dynamic-sets state file (no privileges
+    needed); drop counters and ban trends reuse the analytics helpers that the
+    daily report already exercises.  Every lookup is best-effort — a missing
+    data source hides its tile rather than failing the dashboard.
+    """
+    out: dict[str, Any] = {}
+    try:
+        sets = json.loads(_SETS_FILE.read_text())
+        out["blocked"] = len(sets.get("blocked_ips", []))
+        out["trusted"] = len(sets.get("trusted_ips", []))
+        out["geo_allow"] = len(sets.get("geowhitelist_ips", []))
+    except Exception:
+        pass
+    try:
+        from utils.analytics import (
+            country_flag,
+            country_leaderboard,
+            total_drop_packets,
+            weekly_ban_counts,
+        )
+        out["drops"] = total_drop_packets()
+        this_week, last_week = weekly_ban_counts()
+        out["bans_week"], out["bans_last_week"] = this_week, last_week
+        out["top_countries"] = [
+            {"count": row[0], "cc": row[1], "flag": country_flag(row[1])}
+            for row in country_leaderboard(4)
+        ]
+    except Exception:
+        pass
+    return out
+
+
+# The page polls every 2 s; collecting shells out to the watchdog, systemctl,
+# docker and nft, so serve a short-lived snapshot instead of re-collecting
+# per request.
+_DASH_CACHE: dict[str, Any] = {"t": 0.0, "data": None}
+_DASH_TTL = 4.0
+_DASH_LOCK = threading.Lock()
+
+
+def cached_dashboard() -> dict[str, Any]:
+    with _DASH_LOCK:
+        now = time.time()
+        if _DASH_CACHE["data"] is None or now - _DASH_CACHE["t"] > _DASH_TTL:
+            _DASH_CACHE["data"] = collect_dashboard()
+            _DASH_CACHE["t"] = now
+        return _DASH_CACHE["data"]
+
+
 def collect_dashboard(config_path: str | None = None) -> dict[str, Any]:
     """Collect read-only dashboard data."""
     cfg_path = config_path or _config_path()
@@ -259,6 +314,7 @@ def collect_dashboard(config_path: str | None = None) -> dict[str, Any]:
         "report": report,
         "config_path": cfg_path,
         "collected_at": int(time.time()),
+        "threat": _threat_stats(),
         "system": {
             "cpu": _cpu_load(),
             "memory": _memory_usage(),
@@ -326,6 +382,7 @@ def render_dashboard(data: dict[str, Any]) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NFT Firewall Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>&#128737;</text></svg>">
   <style>
     :root {{
       color-scheme: dark;
@@ -522,12 +579,15 @@ def render_dashboard(data: dict[str, Any]) -> str:
       border: 1px solid var(--line);
     }}
     .fill {{
+      width: 0;
       height: 100%;
       background: linear-gradient(90deg, var(--cyan), var(--green));
       border-radius: 99px;
       transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
       box-shadow: 0 0 10px rgba(56, 189, 248, 0.24);
     }}
+    .threat-metrics {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }}
+    .threat-metrics .metric strong {{ font-size: 20px; }}
     table {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
     th, td {{
       padding: 10px 4px;
@@ -584,7 +644,7 @@ def render_dashboard(data: dict[str, Any]) -> str:
       </div>
     </header>
     <section class="metrics">
-      <section class="metric"><span>VPN IP</span><strong id="vpnIp">hidden</strong></section>
+      <section class="metric"><span>VPN</span><strong id="vpnIp">checking</strong></section>
       <section class="metric"><span>Handshake</span><strong id="handshake">{html.escape(f"{handshake}s" if isinstance(handshake, int) else str(handshake))}</strong></section>
       <section class="metric {html.escape('ok' if markers == 'ok' else 'warn')}"><span>Markers</span><strong id="markers">{html.escape(str(markers))}</strong></section>
       <section class="metric {html.escape('ok' if nft_integrity == 'intact' else 'warn')}"><span>NFT Rules</span><strong id="nftRules">{html.escape(nft_integrity)}</strong></section>
@@ -621,6 +681,35 @@ def render_dashboard(data: dict[str, Any]) -> str:
               <h4>Exposed Ports Overview</h4>
               <ul class="report-list port-list" id="briefPortRows">
                 <li><span>loading</span><span></span></li>
+              </ul>
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="report-header">
+            <div>
+              <h3>Threat Overview</h3>
+              <p><span id="threatMeta">live nftables counters</span></p>
+            </div>
+          </div>
+          <section class="threat-metrics">
+            <section class="metric"><span>Blocked IPs</span><strong id="tBlocked">--</strong></section>
+            <section class="metric"><span>Trusted IPs</span><strong id="tTrusted">--</strong></section>
+            <section class="metric"><span>Geo Allowlist</span><strong id="tGeo">--</strong></section>
+            <section class="metric"><span>Packets Denied</span><strong id="tDrops">--</strong></section>
+          </section>
+          <div class="report-grid">
+            <div class="report-section">
+              <h4>SSH Auto-bans</h4>
+              <ul class="report-list">
+                <li><span>This week</span><span id="tBansWeek">--</span></li>
+                <li><span>Last week</span><span id="tBansLast">--</span></li>
+              </ul>
+            </div>
+            <div class="report-section">
+              <h4>Top Attacking Countries</h4>
+              <ul class="report-list" id="tCountries">
+                <li><span>none recorded</span><span></span></li>
               </ul>
             </div>
           </div>
@@ -695,17 +784,21 @@ def render_dashboard(data: dict[str, Any]) -> str:
       const h = data.health || {{}};
       const s = data.system || {{}};
       document.getElementById("status").textContent = h.status || "UNKNOWN";
-      document.getElementById("reason").textContent = redactIps(h.reason || "No reason reported");
+      document.getElementById("reason").textContent = (h.status || "").toUpperCase() === "HEALTHY"
+        ? `VPN up · handshake ${{h.handshake_age_s ?? "--"}}s ago · all rules intact`
+        : redactIps(h.reason || "No reason reported");
       document.querySelector(".status-card").className = `status-card ${{(h.status || "").toUpperCase() === "HEALTHY" ? "ok" : "warn"}}`;
       document.getElementById("briefStatus").textContent = h.status || "UNKNOWN";
       document.getElementById("briefStatus").className = `pill ${{(h.status || "").toUpperCase() === "HEALTHY" ? "ok" : "warn"}}`;
       document.getElementById("briefDate").textContent = new Date().toLocaleString(undefined, {{weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"}});
-      document.getElementById("vpnIp").textContent = "hidden";
+      document.getElementById("vpnIp").textContent = h.vpn_ip ? "Connected" : "Down";
       document.getElementById("handshake").textContent = h.handshake_age_s === null || h.handshake_age_s === undefined ? "--" : `${{h.handshake_age_s}}s`;
       document.getElementById("markers").textContent = h.markers || "--";
       document.getElementById("nftRules").textContent = h.nft_integrity ? "intact" : "check";
       document.getElementById("persistedRules").textContent = h.persisted_ruleset_integrity || "unknown";
-      document.getElementById("vpnState").textContent = h.vpn_ip ? "hidden" : "unknown";
+      document.getElementById("vpnState").textContent = h.vpn_ip ? "Connected" : "Down";
+      document.getElementById("vpnDot").className = dotClass(Boolean(h.vpn_ip));
+      document.getElementById("handshakeDot").className = dotClass((h.handshake_age_s ?? 999) < 150);
       document.getElementById("handshakeBrief").textContent = h.handshake_age_s === null || h.handshake_age_s === undefined ? "unknown" : `${{h.handshake_age_s}}s ago`;
       document.getElementById("markerBrief").textContent = h.markers === "ok" ? "Active" : (h.markers || "check");
       document.getElementById("nftBrief").textContent = h.nft_integrity ? "Intact" : "Check";
@@ -745,6 +838,18 @@ def render_dashboard(data: dict[str, Any]) -> str:
         .map(row => `<li><span>${{briefName(row.name)}}</span><span class="status-indicator"><i class="${{dotClass(serviceOk(row))}}"></i> ${{row.state}}</span></li>`)
         .join("") || "<li><span>Services</span><span>unknown</span></li>";
 
+      const t = data.threat || {{}};
+      const num = (v) => v === null || v === undefined ? "--" : Number(v).toLocaleString();
+      document.getElementById("tBlocked").textContent = num(t.blocked);
+      document.getElementById("tTrusted").textContent = num(t.trusted);
+      document.getElementById("tGeo").textContent = num(t.geo_allow);
+      document.getElementById("tDrops").textContent = num(t.drops);
+      document.getElementById("tBansWeek").textContent = num(t.bans_week);
+      document.getElementById("tBansLast").textContent = num(t.bans_last_week);
+      document.getElementById("tCountries").innerHTML = (t.top_countries || []).map(row =>
+        `<li><span>${{row.flag || ""}} ${{row.cc}}</span><span>${{num(row.count)}} blocked</span></li>`
+      ).join("") || "<li><span>none recorded</span><span></span></li>";
+
       document.getElementById("updated").textContent = new Date().toLocaleTimeString();
     }}
     refresh().catch(console.error);
@@ -766,14 +871,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-            "connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'",
+            "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
         )
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         route = urlparse(self.path).path
         try:
-            data = collect_dashboard()
+            data = cached_dashboard()
             if route in {"/", "/index.html"}:
                 page = render_dashboard(data).encode("utf-8")
                 self._headers(HTTPStatus.OK, "text/html; charset=utf-8")

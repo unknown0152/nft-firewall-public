@@ -832,7 +832,8 @@ def step4_install_sudoers() -> None:
         f"    {WRAPPER_DIR}/fw-wg-quick, \\",
         f"    {WRAPPER_DIR}/fw-ip, \\",
         f"    {WRAPPER_DIR}/fw-conntrack, \\",
-        f"    {WRAPPER_DIR}/fw-systemctl",
+        f"    {WRAPPER_DIR}/fw-systemctl, \\",
+        f"    {WRAPPER_DIR}/fw-docker",
         "",
     ]
 
@@ -1239,6 +1240,22 @@ case "${1:-}" in
   -o) [ "${2:-}" = "link" ] && [ "${3:-}" = "show" ] && exec /usr/bin/ip "$@" ;;
 esac
 echo "fw-ip: denied arguments: $*" >&2
+exit 126
+""")
+    _write_executable(WRAPPER_DIR / "fw-docker", """#!/usr/bin/env bash
+# Read-only docker introspection — lets status reports count running
+# containers without granting the service account docker-socket access.
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == *[';|&$()`><']* ]]; then
+    echo "fw-docker: denied special characters in argument: $arg" >&2
+    exit 126
+  fi
+done
+case "${1:-}" in
+  ps) [ "$#" -eq 3 ] && [ "${2:-}" = "--format" ] && [ "${3:-}" = "{{.Names}}" ] && exec /usr/bin/docker ps --format '{{.Names}}' ;;
+esac
+echo "fw-docker: denied arguments: $*" >&2
 exit 126
 """)
     _write_executable(WRAPPER_DIR / "fw-conntrack", """#!/usr/bin/env bash

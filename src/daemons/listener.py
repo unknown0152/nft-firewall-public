@@ -453,7 +453,10 @@ class KeybaseListener:
         if spec is None:
             print(f"[SECURITY] Default-deny: unknown command {verb!r} from {sender!r}",
                   flush=True)
-            return   # no reply — do not enumerate valid commands to caller
+            # Only authorized senders reach dispatch (is_authorized() gates in
+            # _poll_once), so a hint here enumerates nothing to strangers.
+            self._send_reply(cfg, channel, f"Unknown command `{verb}` — try `!help`")
+            return
 
         # ── Argument validation ────────────────────────────────────────────────
         if spec.needs_ip:
