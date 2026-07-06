@@ -39,6 +39,14 @@ _LOCAL_CONF   = _PROJECT_ROOT / "config" / "firewall.ini"
 _SYSTEM_CONF  = Path("/etc/nft-watchdog.conf")
 
 _RETRY_DELAYS: Tuple[int, ...] = (0, 3, 8)
+
+# Positive-result caches — long-running daemons call notify() often; without
+# these every message costs three wrapper round-trips (whoami + list-channels
+# + send) instead of one.  Failures are never cached so a broken session is
+# re-probed on the next call.
+_READY_CACHE_TTL: int = 300          # seconds to trust a successful whoami
+_ready_cache: dict = {"expires": 0.0}
+_channels_ensured: Set[str] = set()  # team names provisioned this process
 _ROUTED_TEAM_CHANNELS: Tuple[str, ...] = ("general", "vpn-down", "vpn-up", "ssh", "ports")
 _CHANNEL_LINE_RE = re.compile(r"^#([A-Za-z0-9][A-Za-z0-9_-]*)\b")
 
@@ -181,6 +189,8 @@ def _ensure_team_channels(sudo_prefix: Sequence[str], team: str, default_channel
     Keybase account lacks permission, the send attempt still decides the final
     result and logs the actionable error.
     """
+    if team in _channels_ensured:
+        return
     desired = _team_channels(default_channel)
     list_cmd = [*sudo_prefix, "chat", "list-channels", team]
 
@@ -210,9 +220,19 @@ def _ensure_team_channels(sudo_prefix: Sequence[str], team: str, default_channel
         else:
             print(f"[keybase] WARNING: cannot create {team}#{channel}: {created.stderr.strip()}")
 
+    # Channel listing succeeded — don't re-run provisioning for this team
+    # again in this process (best-effort; failures above were already logged).
+    _channels_ensured.add(team)
+
 
 def _wrapper_whoami_ready(sudo_prefix: Sequence[str], kb_user: str) -> bool:
-    """Return True when the sudoers-safe wrapper can see a logged-in Keybase user."""
+    """Return True when the sudoers-safe wrapper can see a logged-in Keybase user.
+
+    A successful check is cached for :data:`_READY_CACHE_TTL` seconds; failures
+    are never cached.
+    """
+    if _ready_cache["expires"] > time.time():
+        return True
     cmd = [*sudo_prefix, "whoami"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
@@ -222,6 +242,7 @@ def _wrapper_whoami_ready(sudo_prefix: Sequence[str], kb_user: str) -> bool:
 
     whoami = result.stdout.strip()
     if result.returncode == 0 and whoami:
+        _ready_cache["expires"] = time.time() + _READY_CACHE_TTL
         return True
 
     detail = (result.stderr or result.stdout or "").strip()

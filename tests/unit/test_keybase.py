@@ -5,7 +5,19 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
+import pytest
+
 from utils import keybase
+
+
+@pytest.fixture(autouse=True)
+def _reset_keybase_caches():
+    """notify() caches positive whoami/channel checks — isolate tests."""
+    keybase._ready_cache["expires"] = 0.0
+    keybase._channels_ensured.clear()
+    yield
+    keybase._ready_cache["expires"] = 0.0
+    keybase._channels_ensured.clear()
 
 
 def test_channel_for_tags_uses_configured_default_channel():
