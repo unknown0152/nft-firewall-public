@@ -79,3 +79,14 @@ def test_persisted_dynamic_sets_drop_slash_zero(tmp_path):
     assert loaded["blocked_ips"] == ["203.0.113.5/32"]
     assert loaded["trusted_ips"] == ["198.51.100.7/32"]
     assert loaded["dk_ips"] == ["193.163.0.0/16"]
+
+
+def test_validate_duration_accepts_and_rejects():
+    from utils.validation import validate_duration
+    for good in ("48h", "30m", "7d", "1d12h", "90s"):
+        assert validate_duration(good).ok, good
+    for bad in ("", "abc", "48", "12x", "0h", "999d", "-5h"):
+        assert not validate_duration(bad).ok, bad
+    # normalizes to lower-case, caps at 30 days
+    assert validate_duration("48H").value == "48h"
+    assert not validate_duration("31d").ok

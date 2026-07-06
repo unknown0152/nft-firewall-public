@@ -200,6 +200,7 @@ def _audit_set_mutation(
     ips: list[str],
     *,
     path: Path = _AUDIT_LOG_FILE,
+    timeout: str | None = None,
 ) -> None:
     """Append a best-effort JSONL audit record for a dynamic set mutation."""
     record = {
@@ -208,6 +209,7 @@ def _audit_set_mutation(
         "uid": os.getuid(),
         "euid": os.geteuid(),
         "action": action,
+        "timeout": timeout,
         "set": set_name,
         "items": list(ips),
         "count": len(ips),
@@ -416,12 +418,16 @@ def restore_ruleset(
 
 # ── Dynamic set modifiers ─────────────────────────────────────────────────────
 
-def set_add(set_name: str, ip: str) -> bool:
-    """Add an IP address to a live nftables set without reloading the ruleset."""
-    return set_add_bulk(set_name, [ip]) == 1
+def set_add(set_name: str, ip: str, timeout: str | None = None) -> bool:
+    """Add an IP address to a live nftables set without reloading the ruleset.
+
+    *timeout* is an optional nftables duration (e.g. ``"48h"``) making the entry
+    self-expire; the target set must carry the ``timeout`` flag.
+    """
+    return set_add_bulk(set_name, [ip], timeout=timeout) == 1
 
 
-def set_add_bulk(set_name: str, ips: list[str]) -> int:
+def set_add_bulk(set_name: str, ips: list[str], timeout: str | None = None) -> int:
     """Add multiple IP addresses to a live nftables set efficiently.
 
     Parameters
@@ -441,7 +447,8 @@ def set_add_bulk(set_name: str, ips: list[str]) -> int:
     set_name = _canonical_set_name(set_name)
 
     # Use a temporary file to avoid shell argument length limits
-    elements = ", ".join(ips)
+    suffix = f" timeout {timeout}" if timeout else ""
+    elements = ", ".join(f"{ip}{suffix}" for ip in ips)
     script = f"add element ip firewall {set_name} {{ {elements} }}\n"
 
     tmp: Optional[Path] = None
@@ -455,13 +462,16 @@ def set_add_bulk(set_name: str, ips: list[str]) -> int:
             print(f"[state] WARNING: bulk add to {set_name} failed: {result.stderr.strip()}")
             return 0
 
-        # Update persistence
-        sets = load_persistent_sets()
-        members = set(sets.get(set_name, []))
-        members.update(ips)
-        sets[set_name] = sorted(members)
-        save_persistent_sets(sets)
-        _audit_set_mutation("add", set_name, ips)
+        # Persist only permanent entries. A timed grant lives solely in the
+        # live set and expires on its own; persisting it would resurrect it
+        # (without its timeout) on the next ruleset reload.
+        if not timeout:
+            sets = load_persistent_sets()
+            members = set(sets.get(set_name, []))
+            members.update(ips)
+            sets[set_name] = sorted(members)
+            save_persistent_sets(sets)
+        _audit_set_mutation("add", set_name, ips, timeout=timeout)
         return len(ips)
     finally:
         if tmp and tmp.exists():
@@ -581,7 +591,7 @@ def unblock_ip(ip: str) -> bool:
     return set_del(SET_BLOCKED, result.value)
 
 
-def allow_ip(ip: str) -> bool:
+def allow_ip(ip: str, timeout: str | None = None) -> bool:
     """Add *ip* to the ``trusted_ips`` set (SSH override from non-LAN addresses).
 
     Parameters
@@ -599,7 +609,7 @@ def allow_ip(ip: str) -> bool:
     if not result.ok:
         print(f"[state] WARNING: {result.reason}")
         return False
-    return set_add(SET_TRUSTED, result.value)
+    return set_add(SET_TRUSTED, result.value, timeout=timeout)
 
 
 def disallow_ip(ip: str) -> bool:

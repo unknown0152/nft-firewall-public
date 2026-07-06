@@ -34,6 +34,9 @@ def test_legacy_cosmos_tcp_is_bound_to_vpn_interface():
     )
     ruleset = generate_ruleset(cfg)
 
+    # Legacy host-network cosmos_tcp is a distinct, non-reverse-proxy path and
+    # stays open on the VPN interface (the strict trusted-only gating applies to
+    # cosmos_public_ports, the Docker reverse-proxy ingress the deployment uses).
     assert 'iifname "wg0" tcp dport { 80, 443 } accept' in ruleset
     assert 'iifname "eth0" tcp dport { 80, 443 } accept' not in ruleset
     assert "tcp dport { 80, 443 } accept" not in ruleset.replace(
@@ -87,7 +90,7 @@ def test_cosmos_secure_profile_does_not_open_cosmos_vpn_port():
 def test_cosmos_public_ports_are_configurable():
     ruleset = _rules([8080])
 
-    assert 'iifname "wg0" tcp dport { 8080 } accept' in ruleset
+    assert 'iifname "wg0" ip saddr @trusted_ips tcp dport { 8080 } accept' in ruleset
     assert 'iifname "eth0" tcp dport { 8080 } accept' not in ruleset
     assert "tcp dport { 80, 443 }" not in ruleset
 
@@ -97,7 +100,7 @@ def test_docker_forwarding_is_limited_to_configured_public_ports():
 
     assert "set docker_nets" in ruleset
     assert "elements = { 172.18.0.0/15 }" in ruleset
-    assert 'iifname "wg0" tcp dport { 80, 443 } ip daddr @docker_nets accept' in ruleset
+    assert 'iifname "wg0" ip saddr @trusted_ips tcp dport { 80, 443 } ip daddr @docker_nets accept' in ruleset
     assert 'iifname "eth0" tcp dport { 80, 443 } ip daddr @docker_nets accept' not in ruleset
     assert 'meta iifkind "bridge" meta oifkind "bridge" accept' not in ruleset
 
@@ -105,7 +108,7 @@ def test_docker_forwarding_is_limited_to_configured_public_ports():
 def test_public_ports_only_allowed_on_wg0():
     ruleset = _rules([80, 443])
 
-    assert 'iifname "wg0" tcp dport { 80, 443 } accept' in ruleset
+    assert 'iifname "wg0" ip saddr @trusted_ips tcp dport { 80, 443 } accept' in ruleset
     assert 'iifname "eth0" tcp dport { 80, 443 } accept' not in ruleset
 
 
@@ -137,7 +140,7 @@ public_ports = 80,443
     assert ruleset_cfg.cosmos_public_ports == [80, 443]
     assert ruleset_cfg.lan_full_access is False
     assert ruleset_cfg.lan_allow_ports == [2222, 32400]
-    assert 'iifname "wg0" tcp dport { 80, 443 } accept' in ruleset
+    assert 'iifname "wg0" ip saddr @trusted_ips tcp dport { 80, 443 } accept' in ruleset
     assert 'iifname "eth0" tcp dport { 80, 443 } accept' not in ruleset
     assert "4242" not in ruleset
 
@@ -167,7 +170,7 @@ public_ports = 80,443
 
     assert ruleset_cfg.docker_networks == []
     assert ruleset_cfg.cosmos_public_ports == [80, 443]
-    assert 'iifname "wg0" tcp dport { 80, 443 } accept' in ruleset
+    assert 'iifname "wg0" ip saddr @trusted_ips tcp dport { 80, 443 } accept' in ruleset
     assert 'iifname "pub0" tcp dport { 80, 443 } accept' not in ruleset
     assert "udp dport 4242" not in ruleset
 
@@ -183,7 +186,7 @@ def test_cosmos_public_input_accept_is_not_duplicated_by_extra_ports():
     )
     ruleset = generate_ruleset(cfg)
 
-    assert ruleset.count('iifname "wg0" tcp dport { 80, 443 } accept') == 1
+    assert ruleset.count('iifname "wg0" ip saddr @trusted_ips tcp dport { 80, 443 } accept') == 1
     assert 'iifname "wg0" tcp dport { 8443 } accept' in ruleset
     assert 'iifname "pub0" tcp dport { 80, 443 } accept' not in ruleset
     assert "udp dport 4242" not in ruleset
@@ -224,7 +227,7 @@ def test_strict_lan_mode_allows_configured_lan_ports_and_preserves_cosmos():
 
     assert 'iifname "pub0" ip saddr 192.168.100.0/24 tcp dport 2222 accept' in ruleset
     assert 'iifname "pub0" ip saddr 192.168.100.0/24 tcp dport { 2222, 32400 } accept' in ruleset
-    assert 'iifname "wg0" tcp dport { 80, 443 } accept' in ruleset
+    assert 'iifname "wg0" ip saddr @trusted_ips tcp dport { 80, 443 } accept' in ruleset
     assert 'iifname "pub0" tcp dport { 80, 443 } accept' not in ruleset
     assert "udp dport 4242" not in ruleset
 

@@ -8,6 +8,7 @@ same safety rules.
 from __future__ import annotations
 
 import ipaddress
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -140,6 +141,31 @@ def get_connection_info() -> tuple[str, str]:
         except Exception:
             continue
     return "", ""
+
+
+_DURATION_RE = re.compile(r"^(?:\d+d)?(?:\d+h)?(?:\d+m)?(?:\d+s)?$")
+_MAX_TIMEOUT_SECONDS = 30 * 24 * 3600   # 30 days
+
+
+def validate_duration(value: str) -> ValidationResult:
+    """Validate an nftables timeout duration like ``48h``, ``30m``, ``7d``, ``1d12h``.
+
+    Accepts combined units (d/h/m/s), requires at least one unit, rejects a
+    bare number or unknown units, and caps the total at 30 days so a typo can't
+    create a near-permanent grant.
+    """
+    raw = (value or "").strip().lower()
+    if not raw or not _DURATION_RE.match(raw) or not any(c.isdigit() for c in raw):
+        return ValidationResult(False, reason=f"invalid duration: {value!r} (use e.g. 48h, 30m, 7d)")
+    units = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+    total = 0
+    for num, unit in re.findall(r"(\d+)([dhms])", raw):
+        total += int(num) * units[unit]
+    if total <= 0:
+        return ValidationResult(False, reason="duration must be greater than zero")
+    if total > _MAX_TIMEOUT_SECONDS:
+        return ValidationResult(False, reason="duration exceeds the 30-day maximum")
+    return ValidationResult(True, raw)
 
 
 def validate_trusted_target(value: str) -> ValidationResult:

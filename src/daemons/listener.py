@@ -14,7 +14,7 @@ Supported chat commands
     !ip-list                — blocked and trusted IP sets
     !block <ip>             — block an IP/CIDR at runtime
     !unblock <ip>           — remove from block list
-    !allow <ip>             — add to trusted set (SSH override)
+    !allow <ip> [dur]       — grant 80/443 + SSH access, optional expiry (48h/30m/7d)
     !unallow <ip>           — remove from trusted set
 
 Usage (systemd ExecStart)
@@ -107,6 +107,12 @@ def validate_ip(ip_str: str) -> bool:
     return validate_ipv4_network(ip_str.strip()).ok
 
 
+def validate_duration_str(value: str) -> bool:
+    """Return ``True`` if *value* is a valid nft timeout duration (48h, 30m, 7d)."""
+    from utils.validation import validate_duration
+    return validate_duration(value.strip()).ok
+
+
 def parse_poll_interval(value: object, default: int = POLL_INTERVAL) -> int:
     """Parse and clamp the Keybase polling interval.
 
@@ -127,8 +133,9 @@ class _CmdSpec(NamedTuple):
     """Declarative specification for one permitted ChatOps command."""
     cli_subcmd : str        # first arg passed to main.py (must be in _KNOWN_SAFE_SUBCMDS)
     needs_ip   : bool       # True → require exactly one validated IP/CIDR argument
-    ok_fmt     : str        # .format(ip=..., host=...) for success; "" → use CLI output
+    ok_fmt     : str        # .format(ip=..., host=..., dur=...) for success; "" → use CLI output
     fail_fmt   : str        # .format(ip=..., host=...) prefix for failure; "" → generic
+    allows_duration : bool = False  # True → accept an optional trailing nft duration
 
 
 # Hard-coded ground-truth of safe CLI subcommands.  Every entry in _CMD_WHITELIST
@@ -144,7 +151,7 @@ _KNOWN_SAFE_SUBCMDS: frozenset = frozenset({
 _CMD_WHITELIST: Dict[str, _CmdSpec] = {
     "!block"  : _CmdSpec("block",    True,  "Blocked `{ip}` on {host} ✓",                 "Block failed for `{ip}`"),
     "!unblock": _CmdSpec("unblock",  True,  "Unblocked `{ip}` on {host} ✓",               "Unblock failed for `{ip}`"),
-    "!allow"  : _CmdSpec("allow",    True,  "Allowed `{ip}` (SSH override) on {host} ✓",  "Allow failed for `{ip}`"),
+    "!allow"  : _CmdSpec("allow",    True,  "Allowed `{ip}` {dur} on {host} ✓",           "Allow failed for `{ip}`", True),
     "!unallow": _CmdSpec("disallow", True,  "Removed `{ip}` from trusted on {host} ✓",    "Unallow failed for `{ip}`"),
     "!status" : _CmdSpec("status",   False, "",                                             ""),
     "!rules"  : _CmdSpec("rules",    False, "",                                             ""),
@@ -379,7 +386,8 @@ class KeybaseListener:
             print(f"[SECURITY] Blocked non-whitelisted CLI subcommand: {subcmd!r}", flush=True)
             return 1, f"Command not permitted: {subcmd!r}"
 
-        if len(args) > 2:
+        max_args = 3 if subcmd == "allow" else 2   # allow: subcmd + ip + optional duration
+        if len(args) > max_args:
             print(f"[SECURITY] Too many arguments for {subcmd!r}: {args!r} — blocked", flush=True)
             return 1, f"Too many arguments supplied for {subcmd!r}"
 
@@ -420,7 +428,7 @@ class KeybaseListener:
                 "`!ip-list` — blocked + trusted IPs\n"
                 "`!block <ip>` — block an IP/CIDR\n"
                 "`!unblock <ip>` — remove from block list\n"
-                "`!allow <ip>` — add IP to trusted (SSH override)\n"
+                "`!allow <ip> [dur]` — grant 80/443 + SSH access (e.g. `!allow 1.2.3.4 48h`)\n"
                 "`!unallow <ip>` — remove from trusted set"
             ))
             print("[CMD] help -> ok", flush=True)
@@ -459,15 +467,34 @@ class KeybaseListener:
             return
 
         # ── Argument validation ────────────────────────────────────────────────
+        duration: Optional[str] = None
         if spec.needs_ip:
             if arg is None:
-                self._send_reply(cfg, channel, f"Usage: `{verb} <ip_or_cidr>`")
+                usage = f"`{verb} <ip_or_cidr> [duration]`" if spec.allows_duration else f"`{verb} <ip_or_cidr>`"
+                self._send_reply(cfg, channel, f"Usage: {usage}")
                 return
-            if not validate_ip(arg):
-                print(f"[SECURITY] Invalid IP/CIDR {arg!r} from {sender!r} — rejected",
+            tokens = arg.split()
+            ip_arg = tokens[0]
+            if not validate_ip(ip_arg):
+                print(f"[SECURITY] Invalid IP/CIDR {ip_arg!r} from {sender!r} — rejected",
                       flush=True)
-                self._send_reply(cfg, channel, f"Invalid IP or CIDR: `{arg}`")
+                self._send_reply(cfg, channel, f"Invalid IP or CIDR: `{ip_arg}`")
                 return
+            if len(tokens) == 2 and spec.allows_duration:
+                if not validate_duration_str(tokens[1]):
+                    print(f"[SECURITY] Invalid duration {tokens[1]!r} from {sender!r} — rejected",
+                          flush=True)
+                    self._send_reply(cfg, channel,
+                                     f"Invalid duration: `{tokens[1]}` (try 48h, 30m, 7d)")
+                    return
+                duration = tokens[1]
+            elif len(tokens) > 1:
+                # extra/unexpected tokens beyond ip (+ optional duration) → reject
+                print(f"[SECURITY] Too many arguments for {verb!r} from {sender!r}: "
+                      f"{arg!r} — rejected", flush=True)
+                self._send_reply(cfg, channel, f"`{verb}` takes an IP and an optional duration.")
+                return
+            arg = ip_arg
         else:
             if arg is not None:
                 # A no-arg command with a trailing token is anomalous.
@@ -477,14 +504,20 @@ class KeybaseListener:
                 return
 
         # ── Execute via hardened _run_cli ──────────────────────────────────────
-        cli_args = (spec.cli_subcmd, arg) if spec.needs_ip else (spec.cli_subcmd,)
+        if not spec.needs_ip:
+            cli_args = (spec.cli_subcmd,)
+        elif duration is not None:
+            cli_args = (spec.cli_subcmd, arg, duration)
+        else:
+            cli_args = (spec.cli_subcmd, arg)
         rc, out  = self._run_cli(*cli_args)
 
         if len(out) > 8000:
             out = out[:8000] + "\n…(truncated)"
 
         if rc == 0:
-            reply = (spec.ok_fmt.format(ip=arg, host=host)
+            dur_txt = f"for {duration}" if duration else "permanently" if spec.allows_duration else ""
+            reply = (spec.ok_fmt.format(ip=arg, host=host, dur=dur_txt)
                      if spec.ok_fmt else f"```\n{out}\n```")
             print(f"[CMD] {verb} {arg or ''} -> ok".strip(), flush=True)
         else:

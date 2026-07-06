@@ -1145,13 +1145,20 @@ def _cmd_knockd(args: argparse.Namespace) -> None:
 
 
 def _cmd_allow(args: argparse.Namespace) -> None:
-    from utils.validation import validate_trusted_target
+    from utils.validation import validate_trusted_target, validate_duration
     result = validate_trusted_target(args.ip)
     if not result.ok:
         _die(result.reason)
+    timeout = None
+    if getattr(args, "duration", None):
+        dur = validate_duration(args.duration)
+        if not dur.ok:
+            _die(dur.reason)
+        timeout = dur.value
     from core.state import allow_ip
-    if allow_ip(result.value):
-        print(f"[ok] Trusted {result.value} (SSH override)")
+    if allow_ip(result.value, timeout=timeout):
+        window = f"for {timeout}" if timeout else "permanently"
+        print(f"[ok] Trusted {result.value} {window} (80/443 + SSH)")
     else:
         _die(f"Failed to add {result.value} — is the ruleset loaded?")
 
@@ -2039,8 +2046,10 @@ Quick-start workflow:
     ublk = sub.add_parser("unblock", help="Remove an IP/CIDR from the block list")
     ublk.add_argument("ip")
 
-    alw = sub.add_parser("allow",    help="Add an IP to trusted set (SSH override from non-LAN)")
+    alw = sub.add_parser("allow",    help="Add an IP to trusted set (80/443 + SSH access)")
     alw.add_argument("ip")
+    alw.add_argument("duration", nargs="?", default=None,
+                     help="optional expiry, e.g. 48h, 30m, 7d (permanent if omitted)")
 
     dalw = sub.add_parser("disallow", help="Remove an IP from the trusted set")
     dalw.add_argument("ip")

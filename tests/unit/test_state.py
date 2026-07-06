@@ -234,7 +234,7 @@ def test_set_add_delete_and_list(monkeypatch):
     monkeypatch.setattr(
         state,
         "_audit_set_mutation",
-        lambda action, set_name, ips: audits.append((action, set_name, list(ips))),
+        lambda action, set_name, ips, **kw: audits.append((action, set_name, list(ips))),
     )
 
     assert state.set_add_bulk(state.SET_BLOCKED, ["203.0.113.4/32"]) == 1

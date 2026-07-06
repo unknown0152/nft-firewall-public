@@ -251,12 +251,18 @@ def _nexpr(networks: List[str]) -> str:
     return "{ " + ", ".join(unique) + " }"
 
 
-def _emit_dynamic_set(lines: List[str], name: str, comment: str, elements: List[str]) -> None:
-    """Append an interval ipv4_addr set with optional persisted elements."""
+def _emit_dynamic_set(lines: List[str], name: str, comment: str, elements: List[str],
+                      with_timeout: bool = False) -> None:
+    """Append an interval ipv4_addr set with optional persisted elements.
+
+    ``with_timeout`` adds the ``timeout`` flag so individual elements may carry
+    an expiry (e.g. a 48h temporary allow); untimed elements stay permanent.
+    """
     a = lines.append
+    flags = "interval, timeout" if with_timeout else "interval"
     a(f"    # {comment}")
     a(f"    set {name} {{")
-    a("        type ipv4_addr; flags interval")
+    a(f"        type ipv4_addr; flags {flags}")
     if elements:
         a("        elements = { " + ", ".join(_normalize_intervals(elements)) + " }")
     a("    }")
@@ -452,8 +458,10 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
     _emit_dynamic_set(
         L,
         "trusted_ips",
-        "Trusted public admin IPs — SSH override from non-LAN addresses.",
+        "Trusted IPs — the ONLY sources allowed to 80/443 (+ SSH override). "
+        "Supports per-entry timeouts for temporary !allow grants.",
         cfg.trusted_ips,
+        with_timeout=True,
     )
     _emit_dynamic_set(
         L,
@@ -550,15 +558,11 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
         a("")
 
     if cfg.cosmos_public_ports:
-        a("        # Cosmos Cloud reverse-proxy ingress (configured public TCP ports)")
-        if cfg.geowhitelist_ips:
-            a("        # LOCKDOWN MODE: ingress gated by the country whitelist; the")
-            a("        # trusted set stays as a travel/override escape hatch (!allow).")
-            a(f"        {VPN} ip saddr @trusted_ips tcp dport {_pset(cfg.cosmos_public_ports)} accept")
-            a(f"        {VPN} ip saddr @geowhitelist_ips tcp dport {_pset(cfg.cosmos_public_ports)} "
-              "accept comment \"Lockdown: Country Whitelist Ingress (VPN)\"")
-        else:
-            a(f"        {VPN} tcp dport {_pset(cfg.cosmos_public_ports)} accept")
+        a("        # Cosmos Cloud reverse-proxy ingress — STRICT ALLOWLIST.")
+        a("        # Public web ports are reachable ONLY from the trusted_ips set")
+        a("        # (managed via ChatOps !allow, with optional per-entry timeouts).")
+        a("        # No geo, no open access — everything else hits the policy drop.")
+        a(f"        {VPN} ip saddr @trusted_ips tcp dport {_pset(cfg.cosmos_public_ports)} accept")
         a("")
 
     if cfg.allow_plex_lan:
@@ -663,15 +667,9 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
     a("")
 
     if cfg.cosmos_public_ports:
-        a("        # Cosmos Cloud public reverse-proxy forwarding.")
-        if cfg.geowhitelist_ips:
-            a(f"        {VPN} ip saddr @trusted_ips tcp dport {_pset(cfg.cosmos_public_ports)} "
-              "ip daddr @docker_nets accept")
-            a(f"        {VPN} ip saddr @geowhitelist_ips tcp dport {_pset(cfg.cosmos_public_ports)} "
-              "ip daddr @docker_nets accept comment \"Lockdown: Country Whitelist Forwarding (VPN)\"")
-        else:
-            a(f"        {VPN} tcp dport {_pset(cfg.cosmos_public_ports)} "
-              "ip daddr @docker_nets accept")
+        a("        # Cosmos Cloud reverse-proxy forwarding — STRICT ALLOWLIST (trusted_ips only).")
+        a(f"        {VPN} ip saddr @trusted_ips tcp dport {_pset(cfg.cosmos_public_ports)} "
+          "ip daddr @docker_nets accept")
         a("")
 
     if allowed_exposed:
