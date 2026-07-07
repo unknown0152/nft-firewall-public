@@ -410,14 +410,17 @@ def _read_single_port(cfg: configparser.ConfigParser, key: str) -> int | None:
 
 
 def _write_config_atomic(path: Path, cfg: configparser.ConfigParser) -> None:
-    """Write INI config atomically while preserving the existing file mode."""
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o640
+    """Write INI config atomically while preserving the existing file mode and ownership."""
+    stat = path.stat() if path.exists() else None
+    mode = stat.st_mode & 0o777 if stat else 0o640
     tmp = path.with_name(f".{path.name}.tmp")
     with tmp.open("w") as fh:
         cfg.write(fh)
         fh.flush()
         os.fsync(fh.fileno())
     os.chmod(tmp, mode)
+    if stat:
+        os.chown(tmp, stat.st_uid, stat.st_gid)
     os.replace(tmp, path)
 
 
