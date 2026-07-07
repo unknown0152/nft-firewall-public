@@ -1183,6 +1183,28 @@ def _cmd_ip_list(_args: argparse.Namespace) -> None:
     print()
 
 
+def _cmd_access(_args: argparse.Namespace) -> None:
+    """List who currently has 80/443 access, splitting permanent vs temporary."""
+    from core.state import trusted_access_list
+    entries = trusted_access_list()
+    if not entries:
+        print("\n  🔒 No IPs currently have web access (80/443). Grant with "
+              "`!allow <ip> [duration]`.\n")
+        return
+    perm = [e for e in entries if e["permanent"]]
+    temp = [e for e in entries if not e["permanent"]]
+    print(f"\n  🔓 Web access (80/443) — {len(entries)} IP(s)\n")
+    if perm:
+        print("  Permanent:")
+        for e in perm:
+            print(f"    • {e['ip']}")
+    if temp:
+        print("  Temporary (auto-expiring):")
+        for e in temp:
+            print(f"    • {e['ip']} — {e['expires']} left")
+    print()
+
+
 def _cmd_docker_expose(args: argparse.Namespace) -> None:
     from integrations.docker import add_expose, detect_bridge_networks
     cfg = _load_config()
@@ -2051,6 +2073,7 @@ Quick-start workflow:
     dalw.add_argument("ip")
 
     sub.add_parser("ip-list",        help="List current blocked and trusted IPs")
+    sub.add_parser("access",         help="List who has 80/443 access, with time remaining")
 
     op = sub.add_parser("open-port", help="Open a config-backed port with safe-apply")
     op.add_argument("port", type=int)
@@ -2165,6 +2188,7 @@ _HANDLERS = {
     "allow"           : _cmd_allow,
     "disallow"        : _cmd_disallow,
     "ip-list"         : _cmd_ip_list,
+    "access"          : _cmd_access,
     "open-port"       : _cmd_open_port,
     "close-port"      : _cmd_close_port,
     "docker-expose"   : _cmd_docker_expose,

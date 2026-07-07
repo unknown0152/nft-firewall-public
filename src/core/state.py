@@ -591,6 +591,36 @@ def unblock_ip(ip: str) -> bool:
     return set_del(SET_BLOCKED, result.value)
 
 
+def trusted_access_list() -> list[dict]:
+    """Return trusted_ips members with expiry info for the ``!access`` command.
+
+    Each entry is ``{"ip": str, "permanent": bool, "expires": str | None}``.
+    ``expires`` is the human string nftables reports (milliseconds trimmed),
+    e.g. ``"44m59s"``; ``None`` for permanent entries.
+    """
+    result = subprocess.run(
+        ["nft", "list", "set", "ip", "firewall", SET_TRUSTED],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return []
+    match = re.search(r"elements\s*=\s*\{([^}]*)\}", result.stdout, re.DOTALL)
+    if not match:
+        return []
+    entries: list[dict] = []
+    for chunk in match.group(1).split(","):
+        parts = chunk.split()
+        if not parts:
+            continue
+        ip = parts[0]
+        expires = None
+        if "expires" in parts:
+            raw = parts[parts.index("expires") + 1]
+            expires = re.sub(r"(\d+)ms$", "", raw) or raw   # trim trailing ms
+        entries.append({"ip": ip, "permanent": expires is None, "expires": expires})
+    return sorted(entries, key=lambda e: (e["permanent"], e["ip"]))
+
+
 def allow_ip(ip: str, timeout: str | None = None) -> bool:
     """Add *ip* to the ``trusted_ips`` set (SSH override from non-LAN addresses).
 

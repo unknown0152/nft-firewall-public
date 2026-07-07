@@ -143,7 +143,7 @@ class _CmdSpec(NamedTuple):
 # would be a deliberate security decision, not an accident.
 _KNOWN_SAFE_SUBCMDS: frozenset = frozenset({
     "block", "unblock", "allow", "disallow",
-    "status", "rules", "ip-list",
+    "status", "rules", "ip-list", "access",
 })
 
 # Declarative whitelist — the ONLY commands the listener may dispatch.
@@ -156,6 +156,7 @@ _CMD_WHITELIST: Dict[str, _CmdSpec] = {
     "!status" : _CmdSpec("status",   False, "",                                             ""),
     "!rules"  : _CmdSpec("rules",    False, "",                                             ""),
     "!ip-list": _CmdSpec("ip-list",  False, "",                                             ""),
+    "!access" : _CmdSpec("access",   False, "",                                             ""),
 }
 
 # Derived from _CMD_WHITELIST so _run_cli and the table can never diverge.
@@ -429,6 +430,7 @@ class KeybaseListener:
                 "`!block <ip>` — block an IP/CIDR\n"
                 "`!unblock <ip>` — remove from block list\n"
                 "`!allow <ip> [dur]` — grant 80/443 + SSH access (e.g. `!allow 1.2.3.4 48h`)\n"
+                "`!access` — who currently has 80/443 access + time remaining\n"
                 "`!unallow <ip>` — remove from trusted set"
             ))
             print("[CMD] help -> ok", flush=True)

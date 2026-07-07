@@ -15,7 +15,7 @@ fi
 
 cmd="${1:-}"
 case "$cmd" in
-  menu|doctor|simulate|safe-apply|block|unblock|allow|disallow|ip-list|open-port|close-port|status|health|debug|logs|rules|profiles|firewall-report|threat-update|geoblock|geoblock-test|geoblock-status|geounblock|geolist|set-stats|metrics-update|keybase-test)
+  menu|doctor|simulate|safe-apply|block|unblock|allow|disallow|ip-list|access|open-port|close-port|status|health|debug|logs|rules|profiles|firewall-report|threat-update|geoblock|geoblock-test|geoblock-status|geounblock|geolist|set-stats|metrics-update|keybase-test)
     export PYTHONPATH="$APP_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
     exec "$PYTHON_BIN" "$MAIN_PY" "$@"
     ;;

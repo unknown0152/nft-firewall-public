@@ -266,3 +266,25 @@ def test_set_bulk_failures_and_convenience_validation(monkeypatch):
     assert state.unblock_ip("not-an-ip") is False
     assert state.allow_ip("0.0.0.0/0") is False
     assert state.disallow_ip("not-an-ip") is False
+
+
+def test_trusted_access_list_parses_permanent_and_timed(monkeypatch):
+    raw = (
+        "table ip firewall {\n"
+        "\tset trusted_ips {\n"
+        "\t\ttype ipv4_addr\n"
+        "\t\tflags interval,timeout\n"
+        "\t\telements = { 198.51.100.9,\n"
+        "\t\t\t     203.0.113.88 timeout 45m expires 44m59s40ms }\n"
+        "\t}\n}\n"
+    )
+    monkeypatch.setattr(
+        state.subprocess, "run",
+        lambda cmd, **kw: _result(cmd, stdout=raw),
+    )
+    entries = state.trusted_access_list()
+    by_ip = {e["ip"]: e for e in entries}
+    assert by_ip["198.51.100.9"]["permanent"] is True
+    assert by_ip["198.51.100.9"]["expires"] is None
+    assert by_ip["203.0.113.88"]["permanent"] is False
+    assert by_ip["203.0.113.88"]["expires"] == "44m59s"   # ms trimmed
