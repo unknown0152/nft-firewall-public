@@ -1273,6 +1273,68 @@ def _cmd_rules(args: argparse.Namespace) -> None:
         _die(f"nft list ruleset failed: {result.stderr.strip()}")
 
 
+def _scan_paths_for_escalation_risk(targets) -> tuple[list[str], int]:
+    """Return (violations, checked_count) for paths a root process depends on.
+
+    A path is a violation if it is not root-owned, or is writable by group or
+    other (group-*read* is fine — the config is read by the daemons). Symlinks
+    are skipped (their mode bits are always rwxrwxrwx and kernel-ignored).
+    """
+    import stat as _stat
+
+    violations: list[str] = []
+    checked = 0
+    for path in sorted(set(targets)):
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            violations.append(f"{path} (cannot stat — parent dir too open?)")
+            continue
+        if _stat.S_ISLNK(st.st_mode):
+            continue
+        checked += 1
+        if st.st_uid != 0:
+            violations.append(f"{path} (owned by uid {st.st_uid}, not root)")
+        elif st.st_mode & 0o022:
+            violations.append(f"{path} (group/world-writable: {oct(st.st_mode & 0o777)})")
+    return violations, checked
+
+
+def _check_privilege_boundary() -> tuple[str, str]:
+    """Verify the bot user cannot tamper with anything root executes.
+
+    The daemons run unprivileged (fw-admin) and reach root only through the
+    fixed sudo-wrapper shims. That boundary holds ONLY while the wrappers, the
+    ``fw`` entry point, the Python code root runs via ``sudo fw``, the sudoers
+    policy, and the unit files are all root-owned and not writable by group or
+    other. A single group/world-writable file or directory in that set would
+    let fw-admin swap in code that later runs as root. This check makes that
+    invariant continuously enforced (doctor runs hourly and alerts on failure).
+    """
+    import glob as _glob
+
+    targets: list[str] = [
+        "/etc/sudoers.d/nft-firewall",
+        "/usr/local/bin/fw",
+        "/usr/local/bin/nft-keybase-notify",
+        "/usr/local/lib/nft-firewall",
+        str(_PROJECT_ROOT / "src"),
+        str(_PROJECT_ROOT / "config"),
+    ]
+    targets += _glob.glob("/usr/local/lib/nft-firewall/*")
+    targets += _glob.glob(str(_PROJECT_ROOT / "src" / "**" / "*.py"), recursive=True)
+    targets += _glob.glob("/etc/systemd/system/nft-*.service")
+
+    violations, checked = _scan_paths_for_escalation_risk(targets)
+    if violations:
+        shown = "; ".join(violations[:4])
+        more = f" (+{len(violations) - 4} more)" if len(violations) > 4 else ""
+        return ("fail", f"bot user could escalate to root via: {shown}{more}")
+    return ("ok", f"{checked} root-run paths are root-owned and not bot-writable")
+
+
 def _cmd_doctor(args: argparse.Namespace) -> None:
     """doctor — non-mutating safety checks for config and generated ruleset."""
     from core.rules import generate_ruleset
@@ -1401,6 +1463,9 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
     persisted = state.load_persistent_sets()
     total = sum(len(v) for v in persisted.values())
     checks.append(("dynamic sets", "ok", f"{total} persisted member(s) across {len(persisted)} set(s)"))
+
+    priv_status, priv_detail = _check_privilege_boundary()
+    checks.append(("privilege boundary", priv_status, priv_detail))
 
     failed = False
     for name, status, detail in checks:
