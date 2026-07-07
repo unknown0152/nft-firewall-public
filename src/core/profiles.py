@@ -11,7 +11,6 @@ Usage
     from core.profiles import get_profile, list_profiles
 
     profile = get_profile("cosmos-vpn-secure")
-    print(profile.cosmos_tcp)   # [80, 443]
 
 Adding a new profile
 --------------------
@@ -35,11 +34,6 @@ class Profile:
     cosmos_enabled:
         Enable Cosmos Cloud reverse-proxy compatibility.  Public ports still
         come from config and are never hardcoded by the profile.
-    cosmos_tcp:
-        Legacy host-bound Cosmos TCP ports. Prefer [cosmos] public_ports.
-    cosmos_udp:
-        Legacy UDP ports. Must remain empty for Cosmos Cloud; Cosmos VPN is
-        intentionally unsupported.
     allow_plex_lan:
         When ``True``, open port 32400 for LAN-only Plex direct play and
         drop it from all other sources.
@@ -47,8 +41,6 @@ class Profile:
 
     description:    str
     cosmos_enabled: bool      = False
-    cosmos_tcp:     List[int] = field(default_factory=list)
-    cosmos_udp:     List[int] = field(default_factory=list)
     allow_plex_lan: bool      = False
 
 
@@ -58,28 +50,20 @@ PROFILES: Dict[str, Profile] = {
     "cosmos-secure": Profile(
         description    = "Cosmos Cloud + Docker isolation + VPN killswitch",
         cosmos_enabled = True,
-        cosmos_tcp     = [],
-        cosmos_udp     = [],
         allow_plex_lan = False,
     ),
     "cosmos-vpn-secure": Profile(
         description    = "Cosmos Cloud + VPN killswitch + Plex LAN direct play",
         cosmos_enabled = True,
-        cosmos_tcp     = [],
-        cosmos_udp     = [],
         allow_plex_lan = True,
     ),
     "vpn-only": Profile(
         description    = "Pure VPN killswitch (minimal, no Cosmos)",
-        cosmos_tcp     = [],
-        cosmos_udp     = [],
         allow_plex_lan = False,
     ),
     "media-vpn": Profile(
         description    = "Cosmos Cloud + VPN killswitch + Plex (legacy mapping)",
         cosmos_enabled = True,
-        cosmos_tcp     = [],
-        cosmos_udp     = [],
         allow_plex_lan = True,
     ),
 }

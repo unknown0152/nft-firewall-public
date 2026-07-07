@@ -15,8 +15,6 @@ Usage
         vpn_server_port="51820",
         lan_net="192.168.1.0/24",
         ssh_port=22,
-        cosmos_tcp=[80, 443],
-        cosmos_udp=[4242],
     )
     ruleset_str = generate_ruleset(cfg, exposed_ports=[...])
 
@@ -78,12 +76,6 @@ class RulesetConfig:
         Optional torrent TCP+UDP port to open on the VPN interface.
     extra_ports:
         Additional TCP ports to open on the VPN interface.
-    cosmos_tcp:
-        TCP ports used by Cosmos (``--network host``, no DNAT needed).
-    cosmos_udp:
-        UDP ports used by Cosmos Constellation VPN.
-        This project does not enable Cosmos VPN; keep empty unless explicitly
-        implementing unrelated custom UDP exposure.
     cosmos_public_ports:
         TCP ports exposed for Cosmos Cloud reverse-proxy ingress.
     allow_plex_lan:
@@ -118,8 +110,6 @@ class RulesetConfig:
     extra_ports:  List[int]      = field(default_factory=list)
 
     # Profile flags
-    cosmos_tcp:     List[int] = field(default_factory=list)
-    cosmos_udp:     List[int] = field(default_factory=list)
     cosmos_public_ports: List[int] = field(default_factory=list)
     allow_plex_lan: bool      = False
 
@@ -191,7 +181,6 @@ def _geowhitelist_tcp_ports(cfg: RulesetConfig) -> List[int]:
     """
     configured_services = (
         set(cfg.extra_ports)
-        | set(cfg.cosmos_tcp)
         | set(cfg.cosmos_public_ports)
         | set(cfg.lan_allow_ports)
     )
@@ -319,10 +308,6 @@ def _build_header(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[str]:
         a(f"# Torrent   : {cfg.torrent_port}")
     if cfg.extra_ports:
         a(f"# Extra     : {', '.join(map(str, cfg.extra_ports))}")
-    if cfg.cosmos_tcp:
-        a(f"# Cosmos-TCP: {', '.join(map(str, cfg.cosmos_tcp))}")
-    if cfg.cosmos_udp:
-        a(f"# Cosmos-UDP: {', '.join(map(str, cfg.cosmos_udp))}")
     a(f"# Plex      : {'yes' if cfg.allow_plex_lan else 'no'}")
     a(f"# Container supernet: {cfg.container_supernet}")
     docker_nets = _normalize_intervals(cfg.docker_networks or [cfg.container_supernet])
@@ -547,15 +532,6 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
         a(f"        {VPN} udp dport {_pset(vpn_udp_in)} accept")
     a("")
 
-    if cfg.cosmos_tcp or cfg.cosmos_udp:
-        a("        # Legacy host-bound Cosmos ports (--network host, no DNAT needed)")
-        if cfg.cosmos_tcp:
-            a(f"        {VPN} tcp dport {_pset(cfg.cosmos_tcp)} accept"
-              "   # Cosmos reverse proxy")
-        if cfg.cosmos_udp:
-            a(f"        {VPN} udp dport {_pset(cfg.cosmos_udp)} accept"
-              "   # Legacy UDP exposure")
-        a("")
 
     if cfg.cosmos_public_ports:
         a("        # Cosmos Cloud reverse-proxy ingress — STRICT ALLOWLIST.")

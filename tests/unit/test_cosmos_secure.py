@@ -24,65 +24,10 @@ def _rules(public_ports=None):
     return generate_ruleset(cfg)
 
 
-def test_legacy_cosmos_tcp_is_bound_to_vpn_interface():
-    cfg = RulesetConfig(
-        phy_if="eth0",
-        vpn_interface="wg0",
-        vpn_server_ip="198.51.100.10",
-        vpn_server_port="51820",
-        cosmos_tcp=[80, 443],
-    )
-    ruleset = generate_ruleset(cfg)
-
-    # Legacy host-network cosmos_tcp is a distinct, non-reverse-proxy path and
-    # stays open on the VPN interface (the strict trusted-only gating applies to
-    # cosmos_public_ports, the Docker reverse-proxy ingress the deployment uses).
-    assert 'iifname "wg0" tcp dport { 80, 443 } accept' in ruleset
-    assert 'iifname "eth0" tcp dport { 80, 443 } accept' not in ruleset
-    assert "tcp dport { 80, 443 } accept" not in ruleset.replace(
-        'iifname "wg0" tcp dport { 80, 443 } accept', ""
-    )
-
-
-def test_legacy_cosmos_udp_is_bound_to_vpn_interface():
-    cfg = RulesetConfig(
-        phy_if="eth0",
-        vpn_interface="wg0",
-        vpn_server_ip="198.51.100.10",
-        vpn_server_port="51820",
-        cosmos_udp=[4242],
-    )
-    ruleset = generate_ruleset(cfg)
-
-    assert 'iifname "wg0" udp dport { 4242 } accept' in ruleset
-    assert 'iifname "eth0" udp dport { 4242 } accept' not in ruleset
-    assert "udp dport { 4242 } accept" not in ruleset.replace(
-        'iifname "wg0" udp dport { 4242 } accept', ""
-    )
-
-
-def test_legacy_cosmos_tcp_and_udp_never_appear_on_physical_interface():
-    cfg = RulesetConfig(
-        phy_if="pub0",
-        vpn_interface="wg0",
-        vpn_server_ip="198.51.100.10",
-        vpn_server_port="51820",
-        cosmos_tcp=[80, 443],
-        cosmos_udp=[4242],
-    )
-    ruleset = generate_ruleset(cfg)
-
-    assert 'iifname "pub0" tcp dport { 80, 443 } accept' not in ruleset
-    assert 'iifname "pub0" udp dport { 4242 } accept' not in ruleset
-    assert 'iifname "wg0" tcp dport { 80, 443 } accept' in ruleset
-    assert 'iifname "wg0" udp dport { 4242 } accept' in ruleset
-
-
 def test_cosmos_secure_profile_does_not_open_cosmos_vpn_port():
     profile = get_profile("cosmos-secure")
     ruleset = _rules([80, 443])
 
-    assert profile.cosmos_udp == []
     assert "4242" not in ruleset
     assert "udp dport 4242" not in ruleset
 

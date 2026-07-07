@@ -194,8 +194,6 @@ def _build_ruleset_config(cfg: configparser.ConfigParser, profile_name: str):
         ssh_port           = _parse_int(cfg.get("network", "ssh_port", fallback="22"), "ssh_port"),
         torrent_port       = torrent_port,
         extra_ports        = extra_ports,
-        cosmos_tcp         = list(profile.cosmos_tcp),
-        cosmos_udp         = list(profile.cosmos_udp),
         cosmos_public_ports = cosmos_public_ports,
         allow_plex_lan     = profile.allow_plex_lan,
         blocked_ips        = dynamic_sets.get(state.SET_BLOCKED, []),
@@ -1227,12 +1225,10 @@ def _cmd_profiles(_args: argparse.Namespace) -> None:
     from core.profiles import list_profiles
     print("\n  Available firewall profiles:\n")
     for name, profile in sorted(list_profiles().items()):
-        tcp  = ", ".join(map(str, profile.cosmos_tcp))  or "none"
-        udp  = ", ".join(map(str, profile.cosmos_udp))  or "none"
         plex = "yes" if profile.allow_plex_lan else "no"
         print(f"  {name}")
         print(f"    {profile.description}")
-        print(f"    cosmos_tcp={tcp}  cosmos_udp={udp}  plex_lan={plex}")
+        print(f"    plex_lan={plex}")
         print()
 
 
