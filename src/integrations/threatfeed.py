@@ -294,12 +294,6 @@ def sync(
         fetched_ips = set(fetched)
         new_ips = set(fetched[:max_entries])
         old_ips = _load_state_unlocked()
-        minimum_plausible = math.ceil(len(old_ips) * 0.75)
-        if old_ips and len(fetched_ips) < minimum_plausible:
-            raise RuntimeError(
-                "threat feed is implausibly truncated; refusing bulk removal "
-                f"({len(old_ips)} old entries, {len(fetched_ips)} fetched entries)"
-            )
         set_name = getattr(firewall_state, "SET_THREATFEED", "threatfeed_ips")
         if hasattr(firewall_state, "set_list"):
             live_raw = firewall_state.set_list(set_name, persistent_fallback=False)
@@ -314,8 +308,16 @@ def sync(
             # set_list and therefore verifies saved ownership against live nft.
             live_ips = set(old_ips)
 
+        known_count = max(len(old_ips), len(live_ips))
+        minimum_plausible = math.ceil(known_count * 0.75)
+        if known_count and len(fetched_ips) < minimum_plausible:
+            raise RuntimeError(
+                "threat feed is implausibly truncated; refusing bulk removal "
+                f"({known_count} known entries, {len(fetched_ips)} fetched entries)"
+            )
+
         to_add = new_ips - live_ips
-        to_remove = old_ips - new_ips
+        to_remove = live_ips - new_ips
 
         # Track only IPs actually changed in nft so failed mutations are retried.
         added_ips: "set[str]" = set()

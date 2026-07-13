@@ -104,6 +104,24 @@ def test_sync_readds_saved_feed_entry_missing_from_live_owner_set(monkeypatch, t
     assert calls == [("threatfeed_ips", "47.1.2.3")]
 
 
+def test_sync_removes_stale_live_owner_even_if_metadata_missed_it(monkeypatch, tmp_path):
+    state_file = tmp_path / "threatfeed-state.json"
+    state_file.write_text('{"ips": []}')
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    monkeypatch.setattr(threatfeed, "_fetch_feed", lambda _url: ["198.51.100.7"])
+
+    calls = []
+    fake_state_module = type("S", (), {})()
+    fake_state_module.SET_THREATFEED = "threatfeed_ips"
+    fake_state_module.set_list = lambda _name, **_kw: ["47.1.2.3"]
+    fake_state_module.set_add = lambda _name, _ip: True
+    fake_state_module.set_del = lambda name, ip: calls.append((name, ip)) or True
+    monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
+
+    assert threatfeed.sync() == (1, 1)
+    assert calls == [("threatfeed_ips", "47.1.2.3")]
+
+
 def test_sync_persists_only_successfully_unblocked_ips(monkeypatch, tmp_path):
     """If unblock_ip fails, the IP must remain in persisted state."""
     state_file = tmp_path / "threatfeed-state.json"

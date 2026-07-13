@@ -16,12 +16,11 @@ The installer is idempotent: running 'install' twice is safe.
 
 Security model
 --------------
-All daemons run as the 'fw-admin' system user (no login shell, no home
-directory).  Privileged operations (nft, wg-quick, ip, conntrack, systemctl
-for the VPN unit) are delegated through a minimal /etc/sudoers.d/nft-firewall
-entry that grants exactly those commands — nothing more.  The personal user
-account that owns Keybase is granted a single sudo permit so that fw-admin
-can send chat notifications without holding the Keybase session itself.
+Each daemon runs under a distinct no-login service identity. Privileged
+operations (nft, wg-quick, ip, conntrack, systemctl for the VPN unit) are
+delegated through caller-aware wrappers and per-service sudo rules. Keybase
+notifications use a chat-only root wrapper that hands work to the configured
+personal Keybase session without sharing that account with the daemons.
 """
 
 from __future__ import annotations
@@ -34,6 +33,7 @@ import os
 import pwd
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -79,6 +79,7 @@ LIB_DIR            = Path("/var/lib/nft-firewall")
 ETC_DIR            = Path("/etc/nft-firewall")
 LOCK_DIR           = Path("/var/lib/nft-firewall-locks")
 SYSTEM_HOME        = LIB_DIR
+SERVICE_HOME_ROOT  = Path("/var/empty/nft-firewall")
 MEDIA_HOME         = Path("/home/media")
 BACKUP_HOME        = Path("/home/backup")
 DEPLOY_HOME        = Path("/home/deploy")
@@ -674,7 +675,12 @@ def step1_create_system_user() -> None:
     _migrate_legacy_system_user()
     _ensure_user(SYSTEM_USER, system=True, home=SYSTEM_HOME, shell="/bin/false")
     for service_user in SERVICE_USERS.values():
-        _ensure_user(service_user, system=True, home=SYSTEM_HOME, shell="/bin/false")
+        _ensure_user(
+            service_user,
+            system=True,
+            home=SERVICE_HOME_ROOT / service_user,
+            shell="/bin/false",
+        )
         _ensure_supplementary_group(service_user, SYSTEM_USER)
     keybase_user = _read_keybase_user()
     _reconcile_report_group(keybase_user)
@@ -872,11 +878,30 @@ def step3_scaffold_dirs() -> None:
         LIB_DIR / "threatfeed-state.json": '{"ips": []}\n',
         LIB_DIR / "geoblock_state.json": '{}\n',
     }
-    for path, initial in authoritative_state.items():
-        if not path.exists():
-            path.write_text(initial)
-        path.chmod(0o640)
+
+    def ensure_authoritative_file(path: Path, initial: str) -> None:
+        fd = os.open(
+            path,
+            os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o640,
+        )
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                _die(f"Unsafe authoritative state path: {path}")
+            if info.st_size == 0 and initial:
+                os.write(fd, initial.encode())
+                os.fsync(fd)
+            os.fchmod(fd, 0o640)
+        finally:
+            os.close(fd)
         _run(["chown", f"root:{SYSTEM_USER}", str(path)])
+
+    for path, initial in authoritative_state.items():
+        ensure_authoritative_file(path, initial)
+
+    audit_log = LOG_DIR / "audit.jsonl"
+    ensure_authoritative_file(audit_log, "")
 
     service_owned = {
         LIB_DIR / "metrics.prom": SERVICE_USERS["metrics"],
@@ -1086,6 +1111,19 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         '          [[ "$resolved_upload" == /run/nft-firewall-report/*.png ]] || allowed=0\n'
         '          [[ -f "$resolved_upload" && ! -L "$upload_path" ]] || allowed=0\n'
         '          [[ "$(/usr/bin/stat -Lc %U:%h -- "$resolved_upload" 2>/dev/null || true)" = "nft-reporter:1" ]] || allowed=0\n'
+        '          if [[ "$allowed" -eq 1 ]]; then\n'
+        '            exec 9<"$resolved_upload"\n'
+        '            fd_identity="$(/usr/bin/stat -Lc %d:%i -- "/proc/self/fd/9")"\n'
+        '            /bin/chown root:nft-report /run/nft-firewall-report\n'
+        '            /bin/chmod 0510 /run/nft-firewall-report\n'
+        '            locked_upload="$(/usr/bin/realpath -e -- "$upload_path" 2>/dev/null || true)"\n'
+        '            path_identity="$(/usr/bin/stat -Lc %d:%i -- "$locked_upload" 2>/dev/null || true)"\n'
+        '            [[ "$locked_upload" = "$resolved_upload" && "$path_identity" = "$fd_identity" ]] || allowed=0\n'
+        '            if [[ "$allowed" -eq 1 ]]; then\n'
+        '              /bin/chown root:nft-report "$resolved_upload"\n'
+        '              /bin/chmod 0640 "$resolved_upload"\n'
+        '            fi\n'
+        '          fi\n'
         '        fi\n'
         '        ;;\n'
         '      api)\n'
@@ -1451,6 +1489,14 @@ exit 126
     emit("fw-wg", r"""#!/usr/bin/env bash
 set -euo pipefail
 vpn_if="@VPN_IF@"
+caller="${SUDO_USER:-root}"
+case "$caller" in
+  nft-webui|nft-doctor|nft-metrics|nft-reporter)
+    [[ "${1:-}" = "show" || "${1:-}" = "config-endpoint" ]] || exit 126
+    ;;
+  nft-watchdog|fw-admin|root) ;;
+  *) exit 126 ;;
+esac
 case "${1:-}" in
   show)
     [ "$#" -eq 3 ] && [ "${2:-}" = "$vpn_if" ] && case "${3:-}" in

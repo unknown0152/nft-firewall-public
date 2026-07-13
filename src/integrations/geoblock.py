@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -44,12 +45,24 @@ def _load_state() -> Dict[str, List[str]]:
 def _save_state(state: Dict[str, List[str]]) -> None:
     """Write the geoblock state file atomically."""
     _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _STATE_FILE.with_suffix(".tmp")
+    tmp: "Path | None" = None
     try:
-        tmp.write_text(json.dumps(state, indent=2))
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=_STATE_FILE.parent,
+            prefix=_STATE_FILE.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            tmp = Path(fh.name)
+            fh.write(json.dumps(state, indent=2) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.chmod(0o640)
         os.replace(tmp, _STATE_FILE)
-    except Exception:
-        tmp.unlink(missing_ok=True)
+    finally:
+        if tmp and tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 # ── Network helpers ───────────────────────────────────────────────────────────
@@ -100,7 +113,7 @@ def _apply_block_guard(cidr: str) -> bool:
 def block_country(cc: str, force: bool = False) -> "tuple[int, int]":
     """Download and block all CIDRs for country *cc* using optimized aggregation."""
     import ipaddress
-    from core.state import set_add_bulk, SET_GEO_BLOCKED
+    from core import state as firewall_state
     from utils.validation import get_connection_info
 
     cc = cc.upper()
@@ -119,9 +132,6 @@ def block_country(cc: str, force: bool = False) -> "tuple[int, int]":
         print(f"  \033[31m!\033[0m No CIDRs fetched for {cc} (network or cache failure)")
         return (0, 0)
 
-    state = _load_state()
-    existing = set(state.get(cc, []))
-
     # ── AGGREGATION PASS ──────────────────────────────────────────────────────
     # Many countries have thousands of small /24 ranges that are contiguous.
     # collapsing them into supernets (e.g. /16) makes the kernel MUCH faster.
@@ -134,56 +144,83 @@ def block_country(cc: str, force: bool = False) -> "tuple[int, int]":
     except Exception as e:
         print(f"  \033[33m!\033[0m Aggregation failed (using raw ranges): {e}")
 
-    to_add = []
-    skipped_count = 0
+    with firewall_state.firewall_transaction_lock():
+        state = _load_state()
+        existing = set(state.get(cc, []))
+        to_add = []
+        skipped_count = 0
 
-    print(f"  \033[34m→\033[0m Filtering against existing blocks...")
-    for cidr in cidrs:
-        if cidr in existing:
-            skipped_count += 1
-            continue
-        if not _apply_block_guard(cidr):
-            skipped_count += 1
-            continue
-        to_add.append(cidr)
+        print(f"  \033[34m→\033[0m Filtering against existing blocks...")
+        for cidr in cidrs:
+            if cidr in existing or not _apply_block_guard(cidr):
+                skipped_count += 1
+                continue
+            to_add.append(cidr)
 
-    if not to_add:
-        print(f"  \033[32m✓\033[0m {cc} is already up to date.")
-        return (0, skipped_count)
+        if not to_add:
+            print(f"  \033[32m✓\033[0m {cc} is already up to date.")
+            return (0, skipped_count)
 
-    print(f"  \033[34m→\033[0m Syncing {len(to_add)} elements to live firewall...")
-    blocked_count = set_add_bulk(SET_GEO_BLOCKED, to_add)
-    
-    if blocked_count > 0:
-        state[cc] = sorted(existing | set(to_add[:blocked_count]))
-        _save_state(state)
-        print(f"  \033[32m✓\033[0m {cc}: {blocked_count} blocked, {skipped_count} skipped")
-    else:
-        print(f"  \033[31m!\033[0m Failed to block {cc} (nft error)")
+        print(f"  \033[34m→\033[0m Syncing {len(to_add)} elements to live firewall...")
+        blocked_count = firewall_state.set_add_bulk(
+            firewall_state.SET_GEO_BLOCKED, to_add
+        )
+
+        if blocked_count > 0:
+            changed = to_add[:blocked_count]
+            state[cc] = sorted(existing | set(changed))
+            try:
+                _save_state(state)
+            except Exception as exc:
+                rolled_back = firewall_state.set_del_bulk(
+                    firewall_state.SET_GEO_BLOCKED, changed
+                )
+                if rolled_back != len(changed):
+                    raise RuntimeError(
+                        f"Geoblock metadata failed ({exc}); live rollback incomplete"
+                    ) from exc
+                raise
+            print(f"  \033[32m✓\033[0m {cc}: {blocked_count} blocked, {skipped_count} skipped")
+        else:
+            print(f"  \033[31m!\033[0m Failed to block {cc} (nft error)")
 
     return (blocked_count, skipped_count)
 
 
 def unblock_country(cc: str) -> int:
     """Remove all CIDRs previously blocked for country *cc*."""
-    from core.state import set_del_bulk, SET_GEO_BLOCKED
+    from core import state as firewall_state
 
     cc = cc.upper()
-    state = _load_state()
-    if cc not in state:
-        print(f"  \033[33m!\033[0m {cc} is not in the geo-block list.")
-        return 0
+    with firewall_state.firewall_transaction_lock():
+        state = _load_state()
+        if cc not in state:
+            print(f"  \033[33m!\033[0m {cc} is not in the geo-block list.")
+            return 0
 
-    to_remove = state[cc]
-    print(f"  \033[34m→\033[0m Removing {len(to_remove)} elements from firewall...")
-    removed = set_del_bulk(SET_GEO_BLOCKED, to_remove)
+        to_remove = state[cc]
+        print(f"  \033[34m→\033[0m Removing {len(to_remove)} elements from firewall...")
+        removed = firewall_state.set_del_bulk(
+            firewall_state.SET_GEO_BLOCKED, to_remove
+        )
 
-    if removed > 0:
-        del state[cc]
-        _save_state(state)
-        print(f"  \033[32m✓\033[0m {cc}: {removed} unblocked")
-    else:
-        print(f"  \033[31m!\033[0m Failed to unblock {cc} (nft error)")
+        if removed > 0:
+            changed = to_remove[:removed]
+            del state[cc]
+            try:
+                _save_state(state)
+            except Exception as exc:
+                restored = firewall_state.set_add_bulk(
+                    firewall_state.SET_GEO_BLOCKED, changed
+                )
+                if restored != len(changed):
+                    raise RuntimeError(
+                        f"Geoblock metadata failed ({exc}); live restore incomplete"
+                    ) from exc
+                raise
+            print(f"  \033[32m✓\033[0m {cc}: {removed} unblocked")
+        else:
+            print(f"  \033[31m!\033[0m Failed to unblock {cc} (nft error)")
         
     return removed
 

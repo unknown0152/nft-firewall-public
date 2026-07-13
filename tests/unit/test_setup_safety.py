@@ -502,6 +502,10 @@ def test_keybase_wrapper_is_limited_to_required_chat_operations(monkeypatch, tmp
     for verb in ("list-channels", "create-channel", "send", "upload", "api"):
         assert f"{verb})" in text
     assert "denied Keybase operation" in text
+    assert 'exec 9<"$resolved_upload"' in text
+    assert 'chown root:nft-report /run/nft-firewall-report' in text
+    assert 'chmod 0510 /run/nft-firewall-report' in text
+    assert '"/proc/self/fd/9"' in text
 
 
 def test_keybase_chatops_ready_rejects_logged_out_wrapper(monkeypatch, tmp_path):

@@ -35,6 +35,19 @@ def _arrange_apply(monkeypatch, *, stdin_ready: bool, stdin_text: str = "", save
 
     monkeypatch.setattr(state, "save_conf", save)
     monkeypatch.setattr(state, "restore_ruleset", lambda _path: events.append("restore"))
+    guard = object()
+    monkeypatch.setattr(
+        state,
+        "arm_rollback_guard",
+        lambda _path, timeout=65: events.append("guard-arm") or guard,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        state,
+        "disarm_rollback_guard",
+        lambda value: events.append("guard-disarm") if value is guard else None,
+        raising=False,
+    )
 
     @contextmanager
     def transaction_lock():
@@ -59,7 +72,9 @@ def test_safe_apply_rejection_never_persists_candidate(monkeypatch):
     result = main._cmd_apply(argparse.Namespace(profile="test", dry_run=False, safe=True))
 
     assert result is False
-    assert events == ["lock-enter", "apply", "restore", "lock-exit"]
+    assert events == [
+        "lock-enter", "guard-arm", "apply", "restore", "guard-disarm", "lock-exit"
+    ]
 
 
 def test_safe_apply_persists_only_after_explicit_confirmation(monkeypatch):
@@ -69,7 +84,8 @@ def test_safe_apply_persists_only_after_explicit_confirmation(monkeypatch):
 
     assert result is True
     assert events == [
-        "lock-enter", "apply", "save", "markers", "geoblocks", "lock-exit"
+        "lock-enter", "guard-arm", "apply", "guard-disarm", "save",
+        "markers", "geoblocks", "lock-exit"
     ]
 
 
@@ -80,7 +96,8 @@ def test_regular_apply_persists_immediately_after_live_apply(monkeypatch):
 
     assert result is True
     assert events == [
-        "lock-enter", "apply", "save", "markers", "geoblocks", "lock-exit"
+        "lock-enter", "guard-arm", "apply", "save", "guard-disarm",
+        "markers", "geoblocks", "lock-exit"
     ]
 
 
@@ -97,4 +114,7 @@ def test_persistence_failure_restores_known_good_live_rules(monkeypatch):
     with pytest.raises(SystemExit):
         main._cmd_apply(argparse.Namespace(profile="test", dry_run=False, safe=True))
 
-    assert events == ["lock-enter", "apply", "save", "restore", "lock-exit"]
+    assert events == [
+        "lock-enter", "guard-arm", "apply", "guard-disarm", "save", "restore",
+        "guard-disarm", "lock-exit"
+    ]

@@ -50,7 +50,12 @@ def test_step1_normalizes_required_user_model(monkeypatch):
 
     assert ("fw-admin", True, setup.SYSTEM_HOME, "/bin/false") in ensured_users
     for service_user in setup.SERVICE_USERS.values():
-        assert (service_user, True, setup.SYSTEM_HOME, "/bin/false") in ensured_users
+        assert (
+            service_user,
+            True,
+            setup.SERVICE_HOME_ROOT / service_user,
+            "/bin/false",
+        ) in ensured_users
         assert (service_user, "fw-admin") in added_groups
     assert ("nft-ssh-alert", "adm") in added_groups
     assert reconciled == ["nuc"]
@@ -160,6 +165,7 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     assert ["chown", "-R", "root:fw-admin", str(etc_dir)] in calls
     for name in ("dynamic-sets.json", "threatfeed-state.json", "geoblock_state.json"):
         assert ["chown", "root:fw-admin", str(lib_dir / name)] in calls
+    assert ["chown", "root:fw-admin", str(log_dir / "audit.jsonl")] in calls
     assert not any(call[:3] == ["chown", "-R", "media:media"] for call in calls)
 
 

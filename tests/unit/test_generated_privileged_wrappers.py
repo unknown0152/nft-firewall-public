@@ -232,6 +232,15 @@ def test_ssh_alert_can_block_but_cannot_grant_trusted_access(wrappers):
     assert allow.returncode == 126
 
 
+def test_read_only_service_cannot_repoint_wireguard_peer(wrappers):
+    env = {**os.environ, "SUDO_USER": "nft-webui"}
+    result = run_wrapper(
+        wrappers, "fw-wg", "set", "wg0", "peer", "A" * 43 + "=",
+        "endpoint", "203.0.113.9:51820", env=env,
+    )
+    assert result.returncode == 126
+
+
 def test_wg_inspection_preserves_base64_padding(wrappers):
     result = run_wrapper(wrappers, "fw-wg-inspect", "wg0")
 

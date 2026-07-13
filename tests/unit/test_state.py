@@ -219,6 +219,19 @@ def test_audit_set_mutation_writes_jsonl(tmp_path, monkeypatch):
     assert oct(audit.stat().st_mode & 0o777) == "0o640"
 
 
+def test_audit_log_refuses_first_writer_symlink(tmp_path):
+    target = tmp_path / "sensitive"
+    target.write_text("unchanged")
+    audit = tmp_path / "audit.jsonl"
+    audit.symlink_to(target)
+
+    state._audit_set_mutation(
+        "add", state.SET_BLOCKED, ["203.0.113.9/32"], path=audit
+    )
+
+    assert target.read_text() == "unchanged"
+
+
 def test_audit_set_mutation_failure_is_nonfatal(tmp_path, capsys):
     not_a_dir = tmp_path / "not-a-dir"
     not_a_dir.write_text("x")
@@ -299,6 +312,58 @@ def test_restore_ruleset_errors(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="restore failed"):
         state.restore_ruleset(backup)
+
+
+def test_rollback_guard_is_detached_and_disarm_removes_token(monkeypatch, tmp_path):
+    lock_dir = tmp_path / "guard-locks"
+    lock_dir.mkdir(mode=0o750)
+    monkeypatch.setattr(state, "_LOCK_DIR", lock_dir)
+    backup = tmp_path / "backup.conf"
+    backup.write_text("flush ruleset\n")
+    backup.chmod(0o600)
+    seen = {}
+
+    class Process:
+        stopped = False
+        pid = 4242
+
+        def poll(self):
+            return 0 if self.stopped else None
+
+        def terminate(self):
+            self.stopped = True
+
+        def wait(self, timeout):
+            return 0
+
+    process = Process()
+    monkeypatch.setattr(
+        state.os,
+        "killpg",
+        lambda pid, _sig: setattr(process, "stopped", pid == process.pid),
+    )
+
+    def popen(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr(state.subprocess, "Popen", popen)
+
+    with state._persistent_sets_lock(tmp_path / "state.json"):
+        guard = state.arm_rollback_guard(backup, timeout=65)
+        inherited_lock_fd = state._LOCK_LOCAL.fd
+
+    assert guard.token.exists()
+    assert seen["kwargs"]["start_new_session"] is True
+    assert seen["kwargs"]["close_fds"] is True
+    assert seen["kwargs"]["pass_fds"] == (inherited_lock_fd,)
+    assert str(backup) in seen["cmd"]
+
+    state.disarm_rollback_guard(guard)
+
+    assert process.stopped
+    assert not guard.token.exists()
 
 
 def test_set_add_delete_and_list(monkeypatch):

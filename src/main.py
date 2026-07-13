@@ -926,12 +926,18 @@ def _cmd_apply_locked(args: argparse.Namespace) -> bool:
     except (OSError, RuntimeError) as exc:
         _die(f"Backup failed — aborting apply: {exc}")
 
+    try:
+        rollback_guard = state.arm_rollback_guard(backup_path)
+    except (OSError, RuntimeError, ValueError) as exc:
+        _die(f"Rollback guard failed — aborting apply: {exc}")
+
     def rollback_failed_change(message: str) -> None:
         print(f"[error] {message}", file=sys.stderr)
         print("[error] Attempting rollback ...", file=sys.stderr)
         try:
             state.restore_ruleset(backup_path)
             print("[ok] Rollback succeeded.", file=sys.stderr)
+            state.disarm_rollback_guard(rollback_guard)
         except (OSError, RuntimeError) as rb_exc:
             print(f"[error] Rollback also failed: {rb_exc}", file=sys.stderr)
         sys.exit(1)
@@ -952,6 +958,7 @@ def _cmd_apply_locked(args: argparse.Namespace) -> bool:
             confirmed = False
 
         if confirmed:
+            state.disarm_rollback_guard(rollback_guard)
             try:
                 state.save_conf(ruleset)
             except (OSError, RuntimeError) as exc:
@@ -966,6 +973,7 @@ def _cmd_apply_locked(args: argparse.Namespace) -> bool:
                 try:
                     state.restore_ruleset(backup_path)
                     print("[ok] Rollback complete.")
+                    state.disarm_rollback_guard(rollback_guard)
                     return False
                 except RuntimeError as exc:
                     _die(f"Rollback failed: {exc}")
@@ -976,6 +984,7 @@ def _cmd_apply_locked(args: argparse.Namespace) -> bool:
             state.save_conf(ruleset)
         except (OSError, RuntimeError) as exc:
             rollback_failed_change(f"Persistence failed: {exc}")
+        state.disarm_rollback_guard(rollback_guard)
         _write_watchdog_markers(ruleset_cfg)
         _reapply_geoblocks()
         return True
