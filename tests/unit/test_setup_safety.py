@@ -1181,3 +1181,23 @@ def test_copytree_replace_copies_to_fresh_install_path(tmp_path):
     setup._copytree_replace(src, dst, "src/")
 
     assert (dst / "main.py").read_text() == "print('fresh install')\n"
+
+
+def test_config_install_preserves_private_live_ini_when_checkout_has_only_example(
+    tmp_path
+):
+    import setup
+
+    source = tmp_path / "source-config"
+    installed = tmp_path / "installed-config"
+    source.mkdir()
+    installed.mkdir()
+    (source / "firewall.ini.example").write_text("example\n")
+    private = installed / "firewall.ini"
+    private.write_text("[secret]\ntoken = keep-me\n")
+    private.chmod(0o640)
+
+    setup._install_config_tree(source, installed)
+
+    assert private.read_text() == "[secret]\ntoken = keep-me\n"
+    assert private.stat().st_mode & 0o777 == 0o640

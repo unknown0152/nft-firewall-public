@@ -148,6 +148,34 @@ def _copy_file_replace(src: Path, dst: Path, label: str) -> None:
     shutil.copy2(src, dst)
 
 
+def _install_config_tree(src: Path, dst: Path) -> None:
+    """Install public config files without deleting a private live firewall.ini."""
+    live_ini = dst / "firewall.ini"
+    preserve = None
+    if live_ini.exists() and not (src / "firewall.ini").exists():
+        info = live_ini.stat(follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            _die(f"Unsafe installed firewall.ini: {live_ini}")
+        preserve = (live_ini.read_bytes(), info)
+
+    _copytree_replace(src, dst, "config/")
+
+    if preserve is not None:
+        content, info = preserve
+        fd = os.open(
+            live_ini,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            stat.S_IMODE(info.st_mode),
+        )
+        try:
+            os.write(fd, content)
+            os.fsync(fd)
+            os.fchown(fd, info.st_uid, info.st_gid)
+            os.fchmod(fd, stat.S_IMODE(info.st_mode))
+        finally:
+            os.close(fd)
+
+
 def _debug_log(msg: str) -> None:
     """Write a timestamped message to the debug log."""
     import datetime
@@ -729,7 +757,7 @@ def step2_install_code() -> None:
     cfg_dir = project_root / "config"
     if cfg_dir.is_dir():
         dst_cfg = INSTALL_DIR / "config"
-        _copytree_replace(cfg_dir, dst_cfg, "config/")
+        _install_config_tree(cfg_dir, dst_cfg)
         _ok(f"Installed config/ → {dst_cfg}")
     else:
         _warn("config/ directory not found — skipping (firewall.ini must be added manually)")
