@@ -84,7 +84,8 @@ FIREWALL_DIRS      = (INSTALL_DIR, LIB_DIR, LOG_DIR, ETC_DIR)
 # Long-running daemons (restarted on every install)
 ACTIVE_SERVICES = ["nft-watchdog", "nft-listener", "nft-ssh-alert"]
 # Timer-driven units (enabled; systemd fires them on schedule)
-TIMERS          = ["nft-daily-report"]
+CORE_TIMERS     = ["nft-firewall-doctor", "nft-firewall-threatfeed", "nft-metrics"]
+KEYBASE_TIMERS  = ["nft-daily-report"]
 
 
 # ── Output helpers ────────────────────────────────────────────────────────────
@@ -1576,7 +1577,7 @@ def step6_reload_and_restart() -> None:
             )
             _warn(f"{unit} failed to restart:\n{jctl.stdout.strip()}")
 
-    timers: List[str] = TIMERS if keybase_ready else []
+    timers: List[str] = CORE_TIMERS + (KEYBASE_TIMERS if keybase_ready else [])
     for tmr in timers:
         unit = f"{tmr}.timer"
         _run(["systemctl", "enable", unit], check=False)
@@ -1706,7 +1707,7 @@ def cmd_status() -> None:
     print()
     all_units = (
         [f"{s}.service" for s in ACTIVE_SERVICES]
-        + [f"{t}.timer" for t in TIMERS]
+        + [f"{t}.timer" for t in CORE_TIMERS + KEYBASE_TIMERS]
     )
     for unit in all_units:
         r = subprocess.run(
@@ -1729,7 +1730,7 @@ def cmd_uninstall() -> None:
 
     all_units = (
         [f"{s}.service" for s in ACTIVE_SERVICES]
-        + [f"{t}.timer" for t in TIMERS]
+        + [f"{t}.timer" for t in CORE_TIMERS + KEYBASE_TIMERS]
     )
 
     _info("Stopping and disabling units ...")

@@ -147,7 +147,10 @@ def test_knockd_has_only_the_capabilities_required_for_capture_and_nft():
     ).read_text()
 
     assert "AmbientCapabilities=CAP_NET_RAW" in service
-    assert "CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN" in service
+    assert (
+        "CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE"
+        in service
+    )
 
 
 def test_watchdog_unit_uses_privileged_systemctl_wrapper():
@@ -396,6 +399,13 @@ def test_step6_skips_optional_services_without_runtime_prereqs(monkeypatch):
     assert ["systemctl", "restart", "nft-listener.service"] not in calls
     assert ["systemctl", "enable", "nft-daily-report.timer"] not in calls
     assert ["systemctl", "restart", "nft-daily-report.timer"] not in calls
+    for unit in (
+        "nft-firewall-doctor.timer",
+        "nft-firewall-threatfeed.timer",
+        "nft-metrics.timer",
+    ):
+        assert ["systemctl", "enable", unit] in calls
+        assert ["systemctl", "restart", unit] in calls
 
 
 def test_step6_starts_optional_services_when_runtime_prereqs_exist(monkeypatch):
