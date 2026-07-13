@@ -15,6 +15,7 @@ Public API
 import configparser
 import fcntl
 import grp
+import importlib
 import ipaddress
 import json
 import math
@@ -264,6 +265,36 @@ def _apply_block_guard(ip: str) -> bool:
     return False
 
 
+def _load_live_block_networks() -> "tuple[ipaddress.IPv4Network, ...]":
+    """Return live blocks as networks for interval-overlap detection.
+
+    The shared ``blocked_ips`` set can already contain a broader GeoIP or
+    operator-managed prefix.  nftables then rejects a feed-owned /32 because
+    interval-set elements may not overlap.  Only the kernel's live set proves
+    that the address is already enforced; persistent state may be stale.
+    """
+    try:
+        firewall_state = importlib.import_module("core.state")
+        values = firewall_state.set_list(
+            firewall_state.SET_BLOCKED,
+            persistent_fallback=False,
+        )
+    except Exception:
+        # Without live coverage evidence, use the normal mutation path.  Its
+        # failure remains visible as a nonzero feed sync.
+        return ()
+
+    networks: list[ipaddress.IPv4Network] = []
+    for value in values:
+        try:
+            network = ipaddress.ip_network(value, strict=False)
+        except ValueError:
+            continue
+        if isinstance(network, ipaddress.IPv4Network):
+            networks.append(network)
+    return tuple(networks)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def sync(
@@ -313,11 +344,19 @@ def sync(
             )
         to_add = new_ips - old_ips
         to_remove = old_ips - new_ips
+        existing_blocks = _load_live_block_networks()
 
         # Track only IPs actually changed in nft so failed mutations are retried.
         added_ips: "set[str]" = set()
+        covered_ips: "set[str]" = set()
         for ip in to_add:
-            if _apply_block_guard(ip) and block_ip(ip):
+            if not _apply_block_guard(ip):
+                continue
+            address = ipaddress.ip_address(ip)
+            if any(address in network for network in existing_blocks):
+                covered_ips.add(ip)
+                continue
+            if block_ip(ip):
                 added_ips.add(ip)
 
         removed_ips: "set[str]" = set()
@@ -327,8 +366,13 @@ def sync(
 
         with _state_lock(exclusive=True):
             _save_state_unlocked((old_ips | added_ips) - removed_ips)
-    print(f"[threatfeed] sync: +{len(added_ips)} added, -{len(removed_ips)} removed")
-    failed = (len(to_add) - len(added_ips)) + (len(to_remove) - len(removed_ips))
+    print(
+        f"[threatfeed] sync: +{len(added_ips)} added, "
+        f"{len(covered_ips)} already covered, -{len(removed_ips)} removed"
+    )
+    failed = (
+        len(to_add) - len(added_ips) - len(covered_ips)
+    ) + (len(to_remove) - len(removed_ips))
     if failed:
         noun = "mutation" if failed == 1 else "mutations"
         raise RuntimeError(f"threat feed sync incomplete: {failed} {noun} failed")

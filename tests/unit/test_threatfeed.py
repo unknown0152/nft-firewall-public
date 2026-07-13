@@ -41,6 +41,56 @@ def test_sync_persists_only_successfully_blocked_ips(monkeypatch, tmp_path):
     )
 
 
+def test_sync_treats_ip_covered_by_existing_cidr_as_satisfied(monkeypatch, tmp_path):
+    """A feed IP covered by a broader block is effective but not feed-owned.
+
+    nftables interval sets reject an exact /32 that overlaps an existing CIDR.
+    The feed must neither fail the whole sync nor claim ownership of that /32,
+    because removing the broader block later must cause the feed to retry it.
+    """
+    state_file = tmp_path / "threatfeed-state.json"
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    monkeypatch.setattr(
+        threatfeed,
+        "_fetch_feed",
+        lambda _url: ["47.1.2.3", "198.51.100.7"],
+    )
+
+    calls: list[str] = []
+    fake_state_module = type("S", (), {})()
+    fake_state_module.SET_BLOCKED = "blocked_ips"
+    fake_state_module.set_list = lambda _name, **_kw: ["47.0.0.0/8"]
+    fake_state_module.block_ip = lambda ip, **_kw: calls.append(ip) or True
+    fake_state_module.unblock_ip = lambda _ip, **_kw: True
+    monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
+
+    assert threatfeed.sync() == (1, 0)
+    assert calls == ["198.51.100.7"]
+    assert threatfeed._load_state() == {"198.51.100.7"}
+
+
+def test_sync_does_not_trust_stale_persistent_cidr(monkeypatch, tmp_path):
+    """Persistent coverage cannot suppress an add when live coverage is absent."""
+    state_file = tmp_path / "threatfeed-state.json"
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    monkeypatch.setattr(threatfeed, "_fetch_feed", lambda _url: ["47.1.2.3"])
+
+    calls: list[str] = []
+    fake_state_module = type("S", (), {})()
+    fake_state_module.SET_BLOCKED = "blocked_ips"
+    fake_state_module.load_persistent_sets = lambda: {
+        "blocked_ips": ["47.0.0.0/8"],
+    }
+    fake_state_module.set_list = lambda _name, **_kw: []
+    fake_state_module.block_ip = lambda ip, **_kw: calls.append(ip) or True
+    fake_state_module.unblock_ip = lambda _ip, **_kw: True
+    monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
+
+    assert threatfeed.sync() == (1, 0)
+    assert calls == ["47.1.2.3"]
+    assert threatfeed._load_state() == {"47.1.2.3"}
+
+
 def test_sync_persists_only_successfully_unblocked_ips(monkeypatch, tmp_path):
     """If unblock_ip fails, the IP must remain in persisted state."""
     state_file = tmp_path / "threatfeed-state.json"
