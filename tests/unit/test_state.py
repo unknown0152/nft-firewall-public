@@ -189,16 +189,17 @@ def test_backup_and_restore_ruleset(tmp_path, monkeypatch):
     assert calls[-1] == ["nft", "--file", str(backup)]
 
 
-def test_backup_writes_placeholder_when_live_rules_unavailable(tmp_path, monkeypatch):
+def test_backup_fails_closed_when_live_rules_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(
         state.subprocess,
         "run",
         lambda cmd, **kwargs: _result(cmd, returncode=1, stderr="no cap"),
     )
 
-    backup = state.backup_ruleset(backup_dir=tmp_path)
+    with pytest.raises(RuntimeError, match="Cannot snapshot live ruleset"):
+        state.backup_ruleset(backup_dir=tmp_path)
 
-    assert backup.read_text() == "# empty\nflush ruleset\n"
+    assert list(tmp_path.glob("nftables_*.conf")) == []
 
 
 def test_restore_ruleset_errors(tmp_path, monkeypatch):

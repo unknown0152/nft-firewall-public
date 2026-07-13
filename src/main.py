@@ -920,22 +920,20 @@ def _cmd_apply(args: argparse.Namespace) -> bool:
     except (OSError, RuntimeError) as exc:
         _die(f"Backup failed — aborting apply: {exc}")
 
+    def rollback_failed_change(message: str) -> None:
+        print(f"[error] {message}", file=sys.stderr)
+        print("[error] Attempting rollback ...", file=sys.stderr)
+        try:
+            state.restore_ruleset(backup_path)
+            print("[ok] Rollback succeeded.", file=sys.stderr)
+        except (OSError, RuntimeError) as rb_exc:
+            print(f"[error] Rollback also failed: {rb_exc}", file=sys.stderr)
+        sys.exit(1)
+
     try:
         state.apply_ruleset(ruleset)
-        state.save_conf(ruleset)
-    except RuntimeError as exc:
-        print(f"[error] Apply failed: {exc}", file=sys.stderr)
-        print("[error] Attempting rollback ...", file=sys.stderr)
-        if backup_path is not None:
-            try:
-                state.restore_ruleset(backup_path)
-                print("[ok] Rollback succeeded.", file=sys.stderr)
-            except RuntimeError as rb_exc:
-                print(f"[error] Rollback also failed: {rb_exc}", file=sys.stderr)
-        else:
-            print("[error] No backup path available — manual intervention required.",
-                  file=sys.stderr)
-        sys.exit(1)
+    except (OSError, RuntimeError) as exc:
+        rollback_failed_change(f"Apply failed: {exc}")
 
     if args.safe:
         print("\n--- ⚠️  SAFE MODE ---")
@@ -948,6 +946,10 @@ def _cmd_apply(args: argparse.Namespace) -> bool:
             confirmed = False
 
         if confirmed:
+            try:
+                state.save_conf(ruleset)
+            except (OSError, RuntimeError) as exc:
+                rollback_failed_change(f"Persistence failed: {exc}")
             print("[ok] CONFIRMED — new rules are now permanent.")
             _write_watchdog_markers(ruleset_cfg)
             _reapply_geoblocks()
@@ -964,6 +966,10 @@ def _cmd_apply(args: argparse.Namespace) -> bool:
             else:
                 _die("No backup path available — manual intervention required.")
     else:
+        try:
+            state.save_conf(ruleset)
+        except (OSError, RuntimeError) as exc:
+            rollback_failed_change(f"Persistence failed: {exc}")
         _write_watchdog_markers(ruleset_cfg)
         _reapply_geoblocks()
         return True

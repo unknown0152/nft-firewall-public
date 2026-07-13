@@ -341,10 +341,9 @@ def backup_ruleset(backup_dir: Path = _BACKUP_DIR) -> Path:
     """Snapshot the currently loaded ruleset to a timestamped file.
 
     Runs ``nft list ruleset`` and writes the output to
-    ``<backup_dir>/nftables_YYYYMMDD_HHMMSS.conf``.  If no ruleset is loaded
-    (empty output or command failure), writes a ``flush ruleset`` placeholder
-    so that a subsequent :func:`restore_ruleset` call leaves the kernel in a
-    clean state.
+    ``<backup_dir>/nftables_YYYYMMDD_HHMMSS.conf``.  A command failure or empty
+    output aborts the operation: a synthetic ``flush ruleset`` file is not a
+    valid rollback point.
 
     Parameters
     ----------
@@ -366,11 +365,11 @@ def backup_ruleset(backup_dir: Path = _BACKUP_DIR) -> Path:
         capture_output=True,
         text=True,
     )
-    if result.returncode == 0 and result.stdout.strip():
-        dest.write_text(result.stdout)
-    else:
-        dest.write_text("# empty\nflush ruleset\n")
-        print("[state] WARNING: no existing ruleset — placeholder backup written")
+    if result.returncode != 0 or not result.stdout.strip():
+        detail = (result.stderr or result.stdout or "empty ruleset output").strip()
+        raise RuntimeError(f"Cannot snapshot live ruleset: {detail}")
+
+    dest.write_text(result.stdout)
 
     dest.chmod(0o600)
     print(f"[state] Backup: {dest}")
