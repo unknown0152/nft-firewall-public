@@ -27,9 +27,8 @@ def test_sync_persists_only_successfully_blocked_ips(monkeypatch, tmp_path):
     fake_state_module.unblock_ip = lambda ip, **_kw: True
     monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
 
-    added, removed = threatfeed.sync()
-    assert added == 2
-    assert removed == 0
+    with pytest.raises(RuntimeError, match="1 mutation failed"):
+        threatfeed.sync()
 
     persisted = threatfeed._load_state()
     assert "1.1.1.1" in persisted
@@ -45,7 +44,8 @@ def test_sync_persists_only_successfully_unblocked_ips(monkeypatch, tmp_path):
     state_file.write_text('{"ips": ["1.1.1.1", "2.2.2.2"]}')
     monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
 
-    monkeypatch.setattr(threatfeed, "_fetch_feed", lambda url: [])  # all gone
+    # One IP remains in the non-empty feed; one old IP must be removed.
+    monkeypatch.setattr(threatfeed, "_fetch_feed", lambda url: ["9.9.9.9"])
 
     fake_state_module = type("S", (), {})()
     fake_state_module.block_ip = lambda ip, **_kw: True
@@ -53,12 +53,43 @@ def test_sync_persists_only_successfully_unblocked_ips(monkeypatch, tmp_path):
     fake_state_module.unblock_ip = lambda ip, **_kw: ip == "1.1.1.1"
     monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
 
-    added, removed = threatfeed.sync()
-    assert added == 0
-    assert removed == 1
+    with pytest.raises(RuntimeError, match="1 mutation failed"):
+        threatfeed.sync()
 
     persisted = threatfeed._load_state()
     assert "1.1.1.1" not in persisted
     assert "2.2.2.2" in persisted, (
         "2.2.2.2 failed to unblock; dropping it from state causes drift"
     )
+    assert "9.9.9.9" in persisted
+
+
+@pytest.mark.parametrize("fetched", [None, []])
+def test_sync_never_treats_failed_or_empty_feed_as_remove_everything(
+    monkeypatch, tmp_path, fetched
+):
+    state_file = tmp_path / "threatfeed-state.json"
+    state_file.write_text('{"ips": ["1.1.1.1"]}')
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    monkeypatch.setattr(threatfeed, "_fetch_feed", lambda url: fetched)
+
+    calls: list[str] = []
+    fake_state_module = type("S", (), {})()
+    fake_state_module.block_ip = lambda ip, **_kw: calls.append(f"block:{ip}") or True
+    fake_state_module.unblock_ip = lambda ip, **_kw: calls.append(f"unblock:{ip}") or True
+    monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
+
+    with pytest.raises(RuntimeError, match="feed (fetch failed|was empty)"):
+        threatfeed.sync()
+
+    assert calls == []
+    assert threatfeed._load_state() == {"1.1.1.1"}
+
+
+def test_fetch_feed_returns_failure_sentinel_on_network_error(monkeypatch):
+    def fail(*_a, **_kw):
+        raise OSError("offline")
+
+    monkeypatch.setattr(threatfeed.urllib.request, "urlopen", fail)
+
+    assert threatfeed._fetch_feed("https://invalid.example") is None

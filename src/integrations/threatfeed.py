@@ -124,7 +124,7 @@ def _save_state(ips: "set[str]") -> None:
 
 # ── Feed fetching ─────────────────────────────────────────────────────────────
 
-def _fetch_feed(url: str) -> "list[str]":
+def _fetch_feed(url: str) -> "list[str] | None":
     """Download and parse the threat feed at *url*.
 
     Skips comment lines (starting with ``#``) and blank lines.  Validates
@@ -137,16 +137,17 @@ def _fetch_feed(url: str) -> "list[str]":
 
     Returns
     -------
-    list[str]
-        List of valid IPv4 address strings.  Returns ``[]`` on any network
-        or parse error.
+    list[str] | None
+        List of valid IPv4 address strings.  Returns ``None`` when the feed
+        could not be fetched; an empty list means the fetch succeeded but did
+        not contain any valid entries.
     """
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
             raw = response.read().decode("utf-8")
     except (urllib.error.URLError, OSError, Exception) as exc:
         print(f"[threatfeed] WARNING: feed fetch failed: {exc}")
-        return []
+        return None
 
     result = []
     for line in raw.splitlines():
@@ -215,7 +216,13 @@ def sync(
     """
     from core.state import block_ip, unblock_ip  # lazy import — avoids nft at import time
 
-    new_ips   = set(_fetch_feed(url)[:max_entries])
+    fetched = _fetch_feed(url)
+    if fetched is None:
+        raise RuntimeError("threat feed fetch failed; refusing to change firewall state")
+    if not fetched:
+        raise RuntimeError("threat feed was empty; refusing to remove existing blocks")
+
+    new_ips   = set(fetched[:max_entries])
     old_ips   = _load_state()
     to_add    = new_ips - old_ips
     to_remove = old_ips - new_ips
@@ -235,6 +242,10 @@ def sync(
 
     _save_state((old_ips | added_ips) - removed_ips)
     print(f"[threatfeed] sync: +{len(added_ips)} added, -{len(removed_ips)} removed")
+    failed = (len(to_add) - len(added_ips)) + (len(to_remove) - len(removed_ips))
+    if failed:
+        noun = "mutation" if failed == 1 else "mutations"
+        raise RuntimeError(f"threat feed sync incomplete: {failed} {noun} failed")
     return (len(added_ips), len(removed_ips))
 
 

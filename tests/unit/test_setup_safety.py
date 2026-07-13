@@ -112,8 +112,11 @@ def test_firewall_threatfeed_service_uses_real_cli_command():
     )
     text = service.read_text()
 
-    assert "ExecStart=/usr/local/bin/fw threat-update" in text
+    assert "ExecStart=/usr/bin/sudo -n /usr/local/bin/fw threat-update" in text
     assert "threatfeed update" not in text
+
+    legacy = service.with_name("nft-threat-update.service").read_text()
+    assert "ExecStart=/usr/bin/sudo -n /usr/local/bin/fw threat-update" in legacy
 
 
 def test_watchdog_unit_uses_privileged_systemctl_wrapper():

@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=fw-admin
 WorkingDirectory=/opt/nft-firewall
-ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py threat-update
+ExecStart=/usr/bin/sudo -n /usr/local/bin/fw threat-update
 Environment=PYTHONPATH=/opt/nft-firewall/src
 StandardOutput=journal
 StandardError=journal
