@@ -71,6 +71,7 @@ class PortKnockDaemon:
                 "iifname", self._vpn_iface,
                 "ip", "saddr", ip,
                 "tcp", "dport", str(self._ssh_port), "accept",
+                "comment", "nft-knockd",
             ]
         elif self._wrapper_path.exists():
             # The privileged wrapper owns every structural part of the rule.
@@ -86,8 +87,12 @@ class PortKnockDaemon:
         return str(data["nftables"][0]["rule"]["handle"])
 
     def _remove_rule(self, handle: str) -> None:
-        cmd = ["nft", "delete", "rule", "ip", "firewall", "input", "handle", handle]
-        cmd = self._privileged_nft(cmd)
+        if os.geteuid() == 0:
+            cmd = ["nft", "delete", "rule", "ip", "firewall", "input", "handle", handle]
+        elif self._wrapper_path.exists():
+            cmd = ["sudo", str(self._wrapper_path), "knock-del", handle]
+        else:
+            raise RuntimeError(f"Security wrapper missing ({self._wrapper_path}) — failing closed")
         subprocess.run(cmd, check=False, timeout=10)
 
     def run_daemon(self) -> None:

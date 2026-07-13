@@ -17,11 +17,20 @@ def wrappers(tmp_path, monkeypatch):
     import setup
 
     emitted: dict[str, Path] = {}
+    fake_nft = tmp_path / "fake-nft"
+    fake_nft.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"${1:-}\" = -a ] && [ \"${2:-}\" = list ]; then\n"
+        "  echo 'ip saddr 203.0.113.7 comment \"nft-knockd\" # handle 42'\n"
+        "  exit 0\n"
+        "fi\n"
+        "echo nft \"$@\"\n"
+    )
+    fake_nft.chmod(0o755)
 
     def write_safe_test_double(path: Path, content: str) -> None:
         # Exercise the generated shell policy without invoking host networking tools.
         for binary in (
-            "/usr/sbin/nft",
             "/usr/bin/wg-quick",
             "/usr/bin/wg",
             "/usr/bin/ip",
@@ -30,6 +39,13 @@ def wrappers(tmp_path, monkeypatch):
             "/usr/local/bin/fw",
         ):
             content = content.replace(binary, "/bin/echo")
+        content = content.replace("/usr/sbin/nft", str(fake_nft))
+        content = content.replace(
+            "/usr/local/lib/nft-firewall/fw-wg-recover", "/bin/echo"
+        )
+        content = content.replace(
+            "/usr/local/lib/nft-firewall/fw-wg-inspect", "/bin/echo"
+        )
         dest = tmp_path / path.name
         dest.write_text(content)
         dest.chmod(0o755)
@@ -37,6 +53,8 @@ def wrappers(tmp_path, monkeypatch):
 
     monkeypatch.setattr(setup, "_write_executable", write_safe_test_double)
     monkeypatch.setattr(setup, "_configured_vpn_interface", lambda: "wg0")
+    monkeypatch.setattr(setup, "_configured_ssh_port", lambda: 2222)
+    monkeypatch.setattr(setup, "_configured_knock_ssh_port", lambda: 3333, raising=False)
     monkeypatch.setattr(setup, "_ok", lambda *_a, **_kw: None)
     setup._install_sudo_wrappers()
     return emitted
@@ -76,6 +94,9 @@ def run_wrapper(wrappers: dict[str, Path], name: str, *args: str):
         ("fw-nft", ("list", "ruleset", "extra")),
         ("fw-nft", ("list", "ruleset;id")),
         ("fw-nft", ("--check", "/tmp/rules.conf")),
+        ("fw-nft", ("--check", "--file", "/etc/shadow")),
+        ("fw-nft", ("delete", "rule", "ip", "firewall", "input", "handle", "42")),
+        ("fw-nft", ("knock-del", "99")),
         ("fw-action", ("safe-apply", "cosmos-vpn-secure")),
         ("fw-action", ("block", "0.0.0.0/0")),
         ("fw-action", ("status", "extra")),
@@ -98,9 +119,9 @@ def test_wrappers_reject_privilege_boundary_bypasses(wrappers, name, args):
         ("fw-wg", ("show", "wg0", "latest-handshakes")),
         ("fw-conntrack", ("-F",)),
         ("fw-nft", ("knock-add", "203.0.113.7")),
-        ("fw-nft", ("delete", "rule", "ip", "firewall", "input", "handle", "42")),
+        ("fw-nft", ("knock-del", "42")),
         ("fw-nft", ("list", "ruleset")),
-        ("fw-nft", ("--check", "--file", "/tmp/rules.conf")),
+        ("fw-wg-quick", ("recover", "wg0", "203.0.113.9")),
         ("fw-action", ("status",)),
         ("fw-action", ("block", "203.0.113.7")),
         ("fw-action", ("allow", "203.0.113.7", "30m")),
@@ -109,4 +130,24 @@ def test_wrappers_reject_privilege_boundary_bypasses(wrappers, name, args):
 )
 def test_wrappers_keep_exact_watchdog_and_knock_operations(wrappers, name, args):
     result = run_wrapper(wrappers, name, *args)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_knock_wrapper_uses_effective_knock_port(wrappers):
+    result = run_wrapper(wrappers, "fw-nft", "knock-add", "203.0.113.7")
+    assert result.returncode == 0
+    assert "dport 3333" in result.stdout
+
+
+def test_nft_check_accepts_only_fw_admin_owned_regular_file(wrappers, tmp_path):
+    import os
+    import pwd
+
+    check_file = tmp_path / "nft_check_rules.conf"
+    check_file.write_text("table ip test {}\n")
+    os.chown(check_file, pwd.getpwnam("fw-admin").pw_uid, -1)
+    check_file.chmod(0o600)
+
+    result = run_wrapper(wrappers, "fw-nft", "--check", "--file", str(check_file))
+
     assert result.returncode == 0, result.stdout + result.stderr

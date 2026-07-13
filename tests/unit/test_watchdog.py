@@ -41,6 +41,31 @@ def test_watchdog_log_file_uses_runtime_log_dir():
     assert NftWatchdog.LOG_FILE == Path("/var/log/nft-firewall/watchdog.log")
 
 
+def test_level3_uses_sanitized_config_inspection_and_fixed_recovery_operation(monkeypatch):
+    wd = _wd()
+    cfg = _make_cfg()
+    cfg["vpn"]["config"] = "/etc/wireguard/wg0.conf"
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        if cmd[:2] == ["wg", "config-endpoint"]:
+            return True, "PublicKey = abcdef=\nEndpoint = vpn.example:51820", ""
+        return True, "", ""
+
+    monkeypatch.setattr(Path, "read_text", lambda _self: (_ for _ in ()).throw(PermissionError("denied")))
+    monkeypatch.setattr(wd, "_run", fake_run)
+    monkeypatch.setattr(
+        "daemons.watchdog.socket.getaddrinfo",
+        lambda *_a, **_kw: [(None, None, None, None, ("203.0.113.9", 0))],
+    )
+    monkeypatch.setattr("daemons.watchdog.time.sleep", lambda _seconds: None)
+
+    assert wd._level3_dns_reresolve(cfg, "wg0") is True
+    assert ["wg", "config-endpoint", "wg0"] in calls
+    assert ["wg-quick", "recover", "wg0", "203.0.113.9"] in calls
+
+
 # ── _vpn_is_healthy ───────────────────────────────────────────────────────────
 
 class TestVpnIsHealthy:

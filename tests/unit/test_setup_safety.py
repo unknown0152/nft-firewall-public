@@ -139,6 +139,17 @@ def test_all_firewall_services_have_baseline_systemd_hardening():
         assert required <= directives, f"{service.name} missing {sorted(required - directives)}"
 
 
+def test_knockd_has_only_the_capabilities_required_for_capture_and_nft():
+    service = (
+        Path(__file__).resolve().parent.parent.parent
+        / "systemd"
+        / "nft-knockd.service"
+    ).read_text()
+
+    assert "AmbientCapabilities=CAP_NET_RAW" in service
+    assert "CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN" in service
+
+
 def test_watchdog_unit_uses_privileged_systemctl_wrapper():
     service = (
         Path(__file__).resolve().parent.parent.parent

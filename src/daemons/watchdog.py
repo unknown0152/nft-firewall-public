@@ -31,11 +31,9 @@ import logging
 import logging.handlers
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from datetime import date, datetime
@@ -740,8 +738,11 @@ class NftWatchdog:
         try:
             content = Path(conf_path).read_text()
         except Exception as exc:
-            self._log("WARN", f"Level 3: cannot read {conf_path}: {exc}")
-            return False
+            self._log("WARN", f"Level 3: cannot read {conf_path}: {exc}; using privileged inspection")
+            ok, content, err = self._run(["wg", "config-endpoint", iface], timeout=10)
+            if not ok:
+                self._log("WARN", f"Level 3: privileged config inspection failed: {err}")
+                return False
 
         m_key  = re.search(r"PublicKey\s*=\s*(\S+)", content)
         m_host = re.search(r"Endpoint\s*=\s*([^:\s]+):(\d+)", content)
@@ -815,26 +816,14 @@ class NftWatchdog:
             )
             return False
 
-        # ── Bring tunnel up with IP-injected config (no DNS in wg-quick) ─────
-        # Write a temp wg0.conf with Endpoint = <ip>:<port> so wg-quick up
-        # never calls getaddrinfo.  Name the file <iface>.conf so wg-quick
-        # derives the correct interface name from the path basename.
-        patched = re.sub(
-            r"(?m)^(Endpoint\s*=\s*)" + re.escape(hostname) + r"(:\d+\s*)$",
-            rf"\g<1>{new_ip}\2",
-            content,
+        # The root-owned recovery helper reads the fixed WireGuard config and
+        # substitutes only this validated IP. No caller-selected path crosses
+        # the privilege boundary.
+        self._run(["wg-quick", "down", iface], timeout=15)
+        time.sleep(2)
+        ok, _, err = self._run(
+            ["wg-quick", "recover", iface, new_ip], timeout=30
         )
-        tmp_dir  = Path(tempfile.mkdtemp(prefix="nft-wd-"))
-        tmp_conf = tmp_dir / f"{iface}.conf"
-        try:
-            tmp_conf.write_text(patched)
-            tmp_conf.chmod(0o600)
-
-            self._run(["wg-quick", "down", iface], timeout=15)
-            time.sleep(2)
-            ok, _, err = self._run(["wg-quick", "up", str(tmp_conf)], timeout=30)
-        finally:
-            shutil.rmtree(str(tmp_dir), ignore_errors=True)
 
         if not ok:
             self._log("WARN", f"Level 3: wg-quick up (IP-injected) failed: {err}")

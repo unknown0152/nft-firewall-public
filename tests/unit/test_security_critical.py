@@ -160,6 +160,9 @@ def test_knockd_add_rule_uses_fixed_shape_privileged_operation(tmp_path, monkeyp
     assert cmd[1] == str(fake_wrapper)
     assert cmd[2:] == ["knock-add", "1.2.3.4"]
 
+    daemon._remove_rule("42")
+    assert captured["cmd"][2:] == ["knock-del", "42"]
+
 
 def test_output_chain_has_single_broad_wg_accept():
     """There must be exactly one broad `oifname "wg0" ... accept` in OUTPUT

@@ -1116,6 +1116,21 @@ def _configured_ssh_port(default: int = 22) -> int:
     return port
 
 
+def _configured_knock_ssh_port(default: int = 22) -> int:
+    """Return the effective SSH port opened by the knock daemon."""
+    cfg = _read_install_config()
+    fallback = _configured_ssh_port(default)
+    try:
+        port = cfg.getint("knockd", "ssh_port", fallback=fallback)
+    except ValueError:
+        _warn(f"Invalid knockd.ssh_port; falling back to {fallback}")
+        return fallback
+    if not 1 <= port <= 65535:
+        _warn(f"Invalid knockd.ssh_port {port!r}; falling back to {fallback}")
+        return fallback
+    return port
+
+
 def _wireguard_runtime_ready() -> bool:
     """Return True when watchdog can reasonably start during install."""
     vpn_if = _configured_vpn_interface()
@@ -1192,7 +1207,7 @@ def _write_executable(path: Path, content: str) -> None:
 def _install_sudo_wrappers() -> None:
     """Install root wrapper scripts that validate privileged command arguments."""
     vpn_if = _configured_vpn_interface()
-    ssh_port = str(_configured_ssh_port())
+    ssh_port = str(_configured_knock_ssh_port())
 
     def emit(name: str, content: str) -> None:
         content = content.replace("@VPN_IF@", vpn_if).replace("@SSH_PORT@", ssh_port)
@@ -1222,11 +1237,6 @@ case "${1:-}" in
       tables) [ "$#" -eq 3 ] && [ "${2:-}" = "tables" ] && [ "${3:-}" = "ip6" ] && exec /usr/sbin/nft list tables ip6 ;;
     esac
     ;;
-  delete)
-    if [ "$#" -eq 7 ] && [ "${2:-}" = "rule" ] && [ "${3:-}" = "ip" ] && [ "${4:-}" = "firewall" ] && [ "${5:-}" = "input" ] && [ "${6:-}" = "handle" ] && [[ "${7:-}" =~ ^[0-9]+$ ]]; then
-       exec /usr/sbin/nft delete rule ip firewall input handle "$7"
-    fi
-    ;;
   knock-add)
     if [ "$#" -eq 2 ] && [[ "${2:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
       IFS=. read -r a b c d <<<"$2"
@@ -1234,10 +1244,25 @@ case "${1:-}" in
         [ "$octet" -le 255 ] || { echo "fw-nft: invalid IPv4 address" >&2; exit 126; }
       done
       exec /usr/sbin/nft --echo --json add rule ip firewall input \
-        iifname "$vpn_if" ip saddr "$2" tcp dport "$ssh_port" accept
+        iifname "$vpn_if" ip saddr "$2" tcp dport "$ssh_port" \
+        accept comment "nft-knockd"
     fi
     ;;
-  --check) [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] && exec /usr/sbin/nft --check --file "$3" ;;
+  knock-del)
+    if [ "$#" -eq 2 ] && [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+      line="$(/usr/sbin/nft -a list chain ip firewall input \
+        | /usr/bin/awk -v handle="$2" '$0 ~ ("# handle " handle "$") { print; exit }')"
+      [[ "$line" == *'comment "nft-knockd"'* ]] \
+        && exec /usr/sbin/nft delete rule ip firewall input handle "$2"
+    fi
+    ;;
+  --check)
+    if [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] \
+       && [ -f "$3" ] && [ ! -L "$3" ] \
+       && [ "$(/usr/bin/stat -c %U -- "$3")" = "fw-admin" ]; then
+      exec /usr/sbin/nft --check --file "$3"
+    fi
+    ;;
   --file|-f) [ "$#" -eq 2 ] && [ "${2:-}" = "/etc/nftables.conf" ] && exec /usr/sbin/nft -f /etc/nftables.conf ;;
 esac
 echo "fw-nft: denied arguments: $*" >&2
@@ -1252,6 +1277,10 @@ case "${1:-}" in
       latest-handshakes|transfer) exec /usr/bin/wg "$@" ;;
     esac
     ;;
+  config-endpoint)
+    [ "$#" -eq 2 ] && [ "${2:-}" = "$vpn_if" ] \
+      && exec /usr/local/lib/nft-firewall/fw-wg-inspect "$vpn_if"
+    ;;
   set)
     if [ "$#" -eq 6 ] && [ "${2:-}" = "$vpn_if" ] && [ "${3:-}" = "peer" ] \
        && [[ "${4:-}" =~ ^[A-Za-z0-9+/]{43}=$ ]] && [ "${5:-}" = "endpoint" ] \
@@ -1263,14 +1292,52 @@ esac
 echo "fw-wg: denied arguments: $*" >&2
 exit 126
 """)
-    emit("fw-wg-quick", """#!/usr/bin/env bash
+    emit("fw-wg-quick", r"""#!/usr/bin/env bash
 set -euo pipefail
 vpn_if="@VPN_IF@"
 case "${1:-}" in
   up|down) [ "$#" -eq 2 ] && [ "${2:-}" = "$vpn_if" ] && exec /usr/bin/wg-quick "$@" ;;
+  recover)
+    [ "$#" -eq 3 ] && [ "${2:-}" = "$vpn_if" ] \
+      && [[ "${3:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+      && exec /usr/local/lib/nft-firewall/fw-wg-recover "$vpn_if" "$3"
+    ;;
 esac
 echo "fw-wg-quick: denied arguments: $*" >&2
 exit 126
+""")
+    emit("fw-wg-inspect", """#!/usr/bin/env bash
+set -euo pipefail
+vpn_if="@VPN_IF@"
+[ "$#" -eq 1 ] && [ "${1:-}" = "$vpn_if" ] || exit 126
+config="/etc/wireguard/${vpn_if}.conf"
+[ -f "$config" ] || exit 1
+exec /usr/bin/awk -F= '
+  /^[[:space:]]*PublicKey[[:space:]]*=/ && !seen_key++ {
+    value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print "PublicKey = " value
+  }
+  /^[[:space:]]*Endpoint[[:space:]]*=/ && !seen_endpoint++ {
+    value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print "Endpoint = " value
+  }
+' "$config"
+""")
+    emit("fw-wg-recover", r"""#!/usr/bin/env bash
+set -euo pipefail
+vpn_if="@VPN_IF@"
+[ "$#" -eq 2 ] && [ "${1:-}" = "$vpn_if" ] \
+  && [[ "${2:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || exit 126
+IFS=. read -r a b c d <<<"$2"
+for octet in "$a" "$b" "$c" "$d"; do [ "$octet" -le 255 ] || exit 126; done
+config="/etc/wireguard/${vpn_if}.conf"
+[ -f "$config" ] || exit 1
+tmp_dir="$(/usr/bin/mktemp -d /run/nft-wg-recover.XXXXXX)"
+trap '/usr/bin/rm -rf -- "$tmp_dir"' EXIT
+tmp_conf="$tmp_dir/${vpn_if}.conf"
+/usr/bin/sed -E \
+  "s|^([[:space:]]*Endpoint[[:space:]]*=[[:space:]]*)[^:[:space:]]+(:[0-9]+[[:space:]]*)$|\\1${2}\\2|" \
+  "$config" > "$tmp_conf"
+/usr/bin/chmod 600 "$tmp_conf"
+/usr/bin/wg-quick up "$tmp_conf"
 """)
     emit("fw-ip", """#!/usr/bin/env bash
 set -euo pipefail

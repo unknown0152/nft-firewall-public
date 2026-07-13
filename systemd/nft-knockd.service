@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=fw-admin
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 UMask=0077
 PrivateTmp=true
 ProtectClock=true
