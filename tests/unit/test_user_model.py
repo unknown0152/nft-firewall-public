@@ -125,12 +125,14 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     lib_dir = tmp_path / "var" / "lib" / "nft-firewall"
     log_dir = tmp_path / "var" / "log" / "nft-firewall"
     etc_dir = tmp_path / "etc" / "nft-firewall"
+    lock_dir = tmp_path / "var" / "lib" / "nft-firewall-locks"
     calls = []
 
     monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
     monkeypatch.setattr(setup, "LIB_DIR", lib_dir)
     monkeypatch.setattr(setup, "LOG_DIR", log_dir)
     monkeypatch.setattr(setup, "ETC_DIR", etc_dir)
+    monkeypatch.setattr(setup, "LOCK_DIR", lock_dir)
     monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
     monkeypatch.setattr(setup, "_run", lambda cmd, **_kw: calls.append(cmd))
 
@@ -138,6 +140,11 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
 
     for path in (install_dir, lib_dir, log_dir, etc_dir):
         assert path.exists()
+    assert lock_dir.exists()
+    assert lock_dir.stat().st_mode & 0o777 == 0o750
+    assert (lock_dir / "dynamic-sets.lock").exists()
+    assert ["chown", "root:fw-admin", str(lock_dir)] in calls
+    assert ["chown", "root:fw-admin", str(lock_dir / "dynamic-sets.lock")] in calls
     for path in (lib_dir, log_dir, etc_dir):
         assert path.stat().st_mode & 0o777 == 0o750
     # Code dir is root-owned (group fw-admin) so daemons cannot rewrite their own code.

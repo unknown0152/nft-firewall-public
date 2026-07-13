@@ -13,6 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 from core import state
 
 
+@pytest.fixture(autouse=True)
+def isolated_state_lock_namespace(monkeypatch, tmp_path):
+    lock_dir = tmp_path / "state-locks"
+    lock_dir.mkdir(mode=0o750)
+    monkeypatch.setattr(state, "_LOCK_DIR", lock_dir)
+
+
 def _result(cmd, returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
@@ -111,6 +118,36 @@ def test_load_and_save_persistent_sets_validate_and_normalize(tmp_path, capsys):
     assert out.stat().st_mode & 0o606 == 0o600
 
 
+def test_persistent_lock_uses_root_controlled_namespace(monkeypatch, tmp_path):
+    lock_dir = tmp_path / "root-controlled-locks"
+    lock_dir.mkdir(mode=0o750)
+    monkeypatch.setattr(state, "_LOCK_DIR", lock_dir)
+
+    state_path = tmp_path / "daemon-writable" / "dynamic-sets.json"
+    state_path.parent.mkdir()
+    with state._persistent_sets_lock(state_path):
+        assert (lock_dir / "dynamic-sets.lock").exists()
+        assert not state_path.with_name("dynamic-sets.json.lock").exists()
+
+
+def test_persistent_lock_times_out_instead_of_blocking_forever(
+    monkeypatch, tmp_path
+):
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir(mode=0o750)
+    monkeypatch.setattr(state, "_LOCK_DIR", lock_dir)
+    monkeypatch.setattr(state, "_LOCK_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(
+        state.fcntl,
+        "flock",
+        lambda *_args: (_ for _ in ()).throw(BlockingIOError()),
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out acquiring firewall state lock"):
+        with state._persistent_sets_lock(tmp_path / "state.json"):
+            pass
+
+
 def test_persist_set_member_adds_and_removes(monkeypatch):
     saved = {name: [] for name in state._KNOWN_SETS}
 
@@ -151,7 +188,7 @@ def test_persistent_state_lock_refuses_symlinks(tmp_path):
     path = tmp_path / "dynamic-sets.json"
     target = tmp_path / "sensitive"
     target.write_text("do not touch")
-    path.with_name(path.name + ".lock").symlink_to(target)
+    (state._LOCK_DIR / "dynamic-sets.lock").symlink_to(target)
 
     with pytest.raises(OSError):
         state.load_persistent_sets(path)
@@ -349,8 +386,77 @@ def test_set_flush_clears_live_and_persistent_state(monkeypatch, tmp_path):
     monkeypatch.setattr(state, "_audit_set_mutation", lambda *_a, **_kw: None)
 
     assert state.set_flush(state.SET_WHITELIST) is True
-    assert calls == [["nft", "flush", "set", "ip", "firewall", state.SET_WHITELIST]]
+    assert calls == [
+        ["nft", "list", "set", "ip", "firewall", state.SET_WHITELIST],
+        ["nft", "flush", "set", "ip", "firewall", state.SET_WHITELIST],
+    ]
     assert state.load_persistent_sets(state_file)[state.SET_WHITELIST] == []
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected_forward", "expected_rollback"),
+    [
+        ("add", "add element", "delete element"),
+        ("delete", "delete element", "add element"),
+    ],
+)
+def test_bulk_mutation_rolls_back_live_state_when_persistence_fails(
+    monkeypatch, tmp_path, operation, expected_forward, expected_rollback
+):
+    monkeypatch.setattr(state, "_SETS_STATE_FILE", tmp_path / "dynamic-sets.json")
+    scripts = []
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:2] == ["nft", "-f"]:
+            scripts.append(Path(cmd[2]).read_text())
+        return _result(cmd)
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(state.subprocess, "run", fake_run)
+    monkeypatch.setattr(state, "_save_persistent_sets_unlocked", fail_save)
+
+    fn = state.set_add_bulk if operation == "add" else state.set_del_bulk
+    with pytest.raises(OSError, match="disk full"):
+        fn(state.SET_BLOCKED, ["203.0.113.8/32"])
+
+    assert expected_forward in scripts[0]
+    assert expected_rollback in scripts[1]
+
+
+def test_set_flush_restores_live_members_when_persistence_fails(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(state, "_SETS_STATE_FILE", tmp_path / "dynamic-sets.json")
+    scripts = []
+    monkeypatch.setattr(
+        state,
+        "_load_persistent_sets_unlocked",
+        lambda _path: {
+            **{name: [] for name in state._KNOWN_SETS},
+            state.SET_WHITELIST: ["203.0.113.0/24"],
+        },
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:2] == ["nft", "-f"]:
+            scripts.append(Path(cmd[2]).read_text())
+        return _result(cmd)
+
+    monkeypatch.setattr(state.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        state,
+        "_save_persistent_sets_unlocked",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        state.set_flush(state.SET_WHITELIST)
+
+    assert scripts == [
+        "add element ip firewall geowhitelist_ips { 203.0.113.0/24 }\n"
+    ]
 
 
 def test_set_bulk_failures_and_convenience_validation(monkeypatch):

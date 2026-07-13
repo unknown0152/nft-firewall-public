@@ -41,6 +41,7 @@ import fcntl
 import subprocess
 import stat
 import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +61,9 @@ TABLE:         str  = "ip firewall"
 
 _SETS_STATE_FILE: Path = Path("/var/lib/nft-firewall/dynamic-sets.json")
 _AUDIT_LOG_FILE: Path = Path("/var/log/nft-firewall/audit.jsonl")
+_DEFAULT_LOCK_DIR: Path = Path("/var/lib/nft-firewall-locks")
+_LOCK_DIR: Path = _DEFAULT_LOCK_DIR
+_LOCK_TIMEOUT_SECONDS: float = 10.0
 _KNOWN_SETS: tuple[str, ...] = (SET_BLOCKED, SET_TRUSTED, SET_WHITELIST, SET_DK)
 
 
@@ -242,30 +246,43 @@ def _audit_set_mutation(
 @contextmanager
 def _persistent_sets_lock(path: Path):
     """Serialize dynamic-set reads and read-modify-write transactions."""
-    lock_path = path.with_name(path.name + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    del path  # All producers share one lock, independent of writable state paths.
+    lock_path = _LOCK_DIR / "dynamic-sets.lock"
+    lock_dir_info = os.lstat(_LOCK_DIR)
+    if not stat.S_ISDIR(lock_dir_info.st_mode) or lock_dir_info.st_mode & 0o022:
+        raise OSError(f"Unsafe firewall state lock directory: {_LOCK_DIR}")
+    if _LOCK_DIR == _DEFAULT_LOCK_DIR and lock_dir_info.st_uid != 0:
+        raise OSError(f"Firewall state lock directory is not root-owned: {_LOCK_DIR}")
+    create_flag = os.O_CREAT if os.geteuid() == 0 else 0
     fd = os.open(
         lock_path,
-        os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
+        create_flag | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
         0o660,
     )
+    locked = False
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise OSError(f"Unsafe persistent-state lock file: {lock_path}")
-        try:
-            import grp
-            os.fchown(fd, -1, grp.getgrnam(_DAEMON_GROUP).gr_gid)
-        except (KeyError, PermissionError, OSError):
-            pass
-        try:
-            os.fchmod(fd, 0o660)
-        except OSError:
-            pass
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        if _LOCK_DIR == _DEFAULT_LOCK_DIR and info.st_uid != 0:
+            raise OSError(f"Firewall state lock file is not root-owned: {lock_path}")
+        deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Timed out acquiring firewall state lock after "
+                        f"{_LOCK_TIMEOUT_SECONDS:g}s"
+                    )
+                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        if locked:
+            fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
 
@@ -513,6 +530,39 @@ def set_add(set_name: str, ip: str, timeout: str | None = None) -> bool:
     return set_add_bulk(set_name, [ip], timeout=timeout) == 1
 
 
+def _run_element_mutation(
+    action: str, set_name: str, ips: list[str], *, timeout: str | None = None
+) -> subprocess.CompletedProcess:
+    """Run one nft element mutation from a private, uniquely named script."""
+    suffix = f" timeout {timeout}" if timeout else ""
+    elements = ", ".join(f"{ip}{suffix}" for ip in ips)
+    script = f"{action} element ip firewall {set_name} {{ {elements} }}\n"
+    tmp: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as fh:
+            fh.write(script)
+            tmp = Path(fh.name)
+        tmp.chmod(0o600)
+        return subprocess.run(["nft", "-f", str(tmp)], capture_output=True, text=True)
+    finally:
+        if tmp and tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
+def _rollback_or_raise(
+    action: str, set_name: str, ips: list[str], persistence_error: BaseException
+) -> None:
+    """Compensate a live mutation after persistence fails, then re-raise."""
+    rollback = _run_element_mutation(action, set_name, ips)
+    if rollback.returncode != 0:
+        detail = (rollback.stderr or rollback.stdout or "unknown nft error").strip()
+        raise RuntimeError(
+            f"Persistent state update failed ({persistence_error}); live rollback "
+            f"also failed: {detail}"
+        ) from persistence_error
+    raise persistence_error
+
+
 def set_add_bulk(set_name: str, ips: list[str], timeout: str | None = None) -> int:
     """Add multiple IP addresses to a live nftables set efficiently.
 
@@ -532,36 +582,25 @@ def set_add_bulk(set_name: str, ips: list[str], timeout: str | None = None) -> i
         return 0
     set_name = _canonical_set_name(set_name)
 
-    # Use a temporary file to avoid shell argument length limits
-    suffix = f" timeout {timeout}" if timeout else ""
-    elements = ", ".join(f"{ip}{suffix}" for ip in ips)
-    script = f"add element ip firewall {set_name} {{ {elements} }}\n"
+    with _persistent_sets_lock(_SETS_STATE_FILE):
+        result = _run_element_mutation("add", set_name, ips, timeout=timeout)
+        if result.returncode != 0:
+            print(f"[state] WARNING: bulk add to {set_name} failed: {result.stderr.strip()}")
+            return 0
 
-    tmp: Optional[Path] = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as fh:
-            fh.write(script)
-            tmp = Path(fh.name)
-
-        with _persistent_sets_lock(_SETS_STATE_FILE):
-            result = subprocess.run(["nft", "-f", str(tmp)], capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"[state] WARNING: bulk add to {set_name} failed: {result.stderr.strip()}")
-                return 0
-
-            # Persist only permanent entries. A timed grant lives solely in
-            # the live set and expires on its own.
-            if not timeout:
-                sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
-                members = set(sets.get(set_name, []))
-                members.update(ips)
-                sets[set_name] = sorted(members)
+        # Persist only permanent entries. A timed grant lives solely in
+        # the live set and expires on its own.
+        if not timeout:
+            sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
+            members = set(sets.get(set_name, []))
+            members.update(ips)
+            sets[set_name] = sorted(members)
+            try:
                 _save_persistent_sets_unlocked(sets, _SETS_STATE_FILE)
-        _audit_set_mutation("add", set_name, ips, timeout=timeout)
-        return len(ips)
-    finally:
-        if tmp and tmp.exists():
-            tmp.unlink(missing_ok=True)
+            except Exception as exc:
+                _rollback_or_raise("delete", set_name, ips, exc)
+    _audit_set_mutation("add", set_name, ips, timeout=timeout)
+    return len(ips)
 
 
 def set_del(set_name: str, ip: str) -> bool:
@@ -575,39 +614,33 @@ def set_del_bulk(set_name: str, ips: list[str]) -> int:
         return 0
     set_name = _canonical_set_name(set_name)
 
-    elements = ", ".join(ips)
-    script = f"delete element ip firewall {set_name} {{ {elements} }}\n"
+    with _persistent_sets_lock(_SETS_STATE_FILE):
+        result = _run_element_mutation("delete", set_name, ips)
+        if result.returncode != 0:
+            print(f"[state] WARNING: bulk delete from {set_name} failed: {result.stderr.strip()}")
+            return 0
 
-    tmp: Optional[Path] = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as fh:
-            fh.write(script)
-            tmp = Path(fh.name)
-
-        with _persistent_sets_lock(_SETS_STATE_FILE):
-            result = subprocess.run(["nft", "-f", str(tmp)], capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"[state] WARNING: bulk delete from {set_name} failed: {result.stderr.strip()}")
-                return 0
-
-            sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
-            members = set(sets.get(set_name, []))
-            for ip in ips:
-                members.discard(ip)
-            sets[set_name] = sorted(members)
+        sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
+        members = set(sets.get(set_name, []))
+        for ip in ips:
+            members.discard(ip)
+        sets[set_name] = sorted(members)
+        try:
             _save_persistent_sets_unlocked(sets, _SETS_STATE_FILE)
-        _audit_set_mutation("delete", set_name, ips)
-        return len(ips)
-    finally:
-        if tmp and tmp.exists():
-            tmp.unlink(missing_ok=True)
+        except Exception as exc:
+            _rollback_or_raise("add", set_name, ips, exc)
+    _audit_set_mutation("delete", set_name, ips)
+    return len(ips)
 
 
 def set_flush(set_name: str) -> bool:
     """Clear one live set and its persistent members as one transaction."""
     set_name = _canonical_set_name(set_name)
-    removed: list[str] = []
     with _persistent_sets_lock(_SETS_STATE_FILE):
+        sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
+        persisted_members = list(sets.get(set_name, []))
+        live_members = set_list(set_name, persistent_fallback=False)
+        removed = live_members or persisted_members
         result = subprocess.run(
             ["nft", "flush", "set", "ip", "firewall", set_name],
             capture_output=True,
@@ -616,10 +649,13 @@ def set_flush(set_name: str) -> bool:
         if result.returncode != 0:
             print(f"[state] WARNING: flush of {set_name} failed: {result.stderr.strip()}")
             return False
-        sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
-        removed = list(sets.get(set_name, []))
         sets[set_name] = []
-        _save_persistent_sets_unlocked(sets, _SETS_STATE_FILE)
+        try:
+            _save_persistent_sets_unlocked(sets, _SETS_STATE_FILE)
+        except Exception as exc:
+            if removed:
+                _rollback_or_raise("add", set_name, removed, exc)
+            raise
     _audit_set_mutation("flush", set_name, removed)
     return True
 

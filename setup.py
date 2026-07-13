@@ -65,6 +65,7 @@ INSTALL_DIR        = Path("/opt/nft-firewall")
 LOG_DIR            = Path("/var/log/nft-firewall")
 LIB_DIR            = Path("/var/lib/nft-firewall")
 ETC_DIR            = Path("/etc/nft-firewall")
+LOCK_DIR           = Path("/var/lib/nft-firewall-locks")
 SYSTEM_HOME        = LIB_DIR
 MEDIA_HOME         = Path("/home/media")
 BACKUP_HOME        = Path("/home/backup")
@@ -839,6 +840,17 @@ def step3_scaffold_dirs() -> None:
         d.chmod(0o750)
         _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(d)])
         _ok(f"chown -R {SYSTEM_USER}:{SYSTEM_USER}  {d}")
+
+    # Locks live outside daemon-writable state so fw-admin cannot unlink and
+    # replace a locked inode to bypass serialization.
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    LOCK_DIR.chmod(0o750)
+    lock_file = LOCK_DIR / "dynamic-sets.lock"
+    lock_file.touch(mode=0o660, exist_ok=True)
+    lock_file.chmod(0o660)
+    _run(["chown", f"root:{SYSTEM_USER}", str(LOCK_DIR)])
+    _run(["chown", f"root:{SYSTEM_USER}", str(lock_file)])
+    _ok(f"Root-controlled state locks: {LOCK_DIR}")
 
 
 # ── Step 4: Sudoers ───────────────────────────────────────────────────────────
