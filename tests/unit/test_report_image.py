@@ -103,6 +103,73 @@ def test_spoofed_report_runtime_is_rejected_before_side_effects(monkeypatch):
     assert calls == []
 
 
+def test_report_image_acl_grants_only_configured_keybase_user(monkeypatch, tmp_path):
+    from utils import keybase
+
+    image = tmp_path / "report.png"
+    image.write_bytes(b"PNG")
+    cfg = keybase.configparser.ConfigParser()
+    cfg["keybase"] = {"linux_user": "nuc"}
+    monkeypatch.setattr(keybase, "_load_config", lambda: cfg)
+    monkeypatch.setattr(keybase, "_detect_linux_user", lambda _cfg: "nuc")
+    monkeypatch.setattr(main.pwd, "getpwnam", lambda _user: SimpleNamespace(pw_uid=1000))
+    calls = []
+    monkeypatch.setattr(
+        main.subprocess,
+        "run",
+        lambda cmd, **_kw: calls.append(cmd)
+        or SimpleNamespace(returncode=0, stderr=""),
+    )
+
+    main._grant_report_image_access(tmp_path, image)
+
+    assert calls == [
+        ["/usr/bin/setfacl", "--no-mask", "--modify", "user:nuc:--x", str(tmp_path)],
+        ["/usr/bin/setfacl", "--no-mask", "--modify", "user:nuc:r--", str(image)],
+    ]
+
+
+def test_report_image_acl_failure_is_fatal(monkeypatch, tmp_path):
+    from utils import keybase
+
+    image = tmp_path / "report.png"
+    image.write_bytes(b"PNG")
+    cfg = keybase.configparser.ConfigParser()
+    cfg["keybase"] = {"linux_user": "nuc"}
+    monkeypatch.setattr(keybase, "_load_config", lambda: cfg)
+    monkeypatch.setattr(keybase, "_detect_linux_user", lambda _cfg: "nuc")
+    monkeypatch.setattr(main.pwd, "getpwnam", lambda _user: SimpleNamespace(pw_uid=1000))
+    monkeypatch.setattr(
+        main.subprocess,
+        "run",
+        lambda _cmd, **_kw: SimpleNamespace(returncode=1, stderr="denied"),
+    )
+
+    with pytest.raises(RuntimeError, match="grant Keybase report access"):
+        main._grant_report_image_access(tmp_path, image)
+
+
+def test_report_image_acl_rejects_missing_explicit_user(monkeypatch, tmp_path):
+    from utils import keybase
+
+    image = tmp_path / "report.png"
+    image.write_bytes(b"PNG")
+    cfg = keybase.configparser.ConfigParser()
+    cfg["keybase"] = {"team": "ops"}
+    monkeypatch.setattr(keybase, "_load_config", lambda: cfg)
+    calls = []
+    monkeypatch.setattr(
+        main.subprocess,
+        "run",
+        lambda cmd, **_kw: calls.append(cmd),
+    )
+
+    with pytest.raises(RuntimeError, match="explicit keybase.linux_user"):
+        main._grant_report_image_access(tmp_path, image)
+
+    assert calls == []
+
+
 def test_port_rows_drop_redundant_scope_suffix():
     parsed = report_image._parse_report("\n".join([
         "🐳 *Docker*",

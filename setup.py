@@ -158,6 +158,7 @@ REQUIRED_INSTALL_COMMANDS = (
     ("visudo", "sudo"),
     ("ip", "iproute2"),
     ("python3", "python3"),
+    ("setfacl", "acl"),
 )
 
 

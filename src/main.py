@@ -1591,6 +1591,51 @@ def _managed_report_image_dir() -> "Path | None":
     return _REPORT_IMAGE_DIR
 
 
+def _grant_report_image_access(directory: Path, image_path: Path) -> None:
+    """Grant the configured Keybase account access to one transient image."""
+    from utils.keybase import _load_config
+
+    keybase_user = _load_config().get(
+        "keybase",
+        "linux_user",
+        fallback="",
+    ).strip()
+    if not keybase_user:
+        raise RuntimeError(
+            "Image reports require an explicit keybase.linux_user configuration"
+        )
+    try:
+        pwd.getpwnam(keybase_user)
+    except KeyError as exc:
+        raise RuntimeError(
+            f"Cannot grant report access to unknown Keybase user: {keybase_user}"
+        ) from exc
+
+    acl_commands = (
+        [
+            "/usr/bin/setfacl",
+            "--no-mask",
+            "--modify",
+            f"user:{keybase_user}:--x",
+            str(directory),
+        ],
+        [
+            "/usr/bin/setfacl",
+            "--no-mask",
+            "--modify",
+            f"user:{keybase_user}:r--",
+            str(image_path),
+        ],
+    )
+    for command in acl_commands:
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Could not grant Keybase report access: "
+                f"{result.stderr.strip()}"
+            )
+
+
 def _cmd_firewall_report(args: argparse.Namespace) -> None:
     """firewall-report — build status report and send it to Keybase."""
     report_dir: "Path | None" = None
@@ -1619,6 +1664,8 @@ def _cmd_firewall_report(args: argparse.Namespace) -> None:
         from utils.keybase import upload_file
         from utils.report_image import render_report_png
 
+        image_path: "Path | None" = None
+        uploaded = False
         try:
             image_path = render_report_png(
                 report,
@@ -1626,20 +1673,22 @@ def _cmd_firewall_report(args: argparse.Namespace) -> None:
                 output_mode=0o640,
                 theme=getattr(args, "image_theme", "dark"),
             )
+            _grant_report_image_access(report_dir, image_path)
+            print("[report] Image rendered for upload")
+            uploaded = upload_file(
+                image_path,
+                title="NFT Firewall Daily Report",
+                tags="shield",
+                priority="default",
+            )
         except RuntimeError as exc:
             _die(str(exc))
-
-        print("[report] Image rendered for upload")
-        uploaded = upload_file(
-            image_path,
-            title="NFT Firewall Daily Report",
-            tags="shield",
-            priority="default",
-        )
-        try:
-            image_path.unlink()
-        except OSError:
-            pass
+        finally:
+            if image_path is not None:
+                try:
+                    image_path.unlink()
+                except OSError:
+                    pass
         if not uploaded:
             _die("Report text sent but image upload failed — check Keybase upload support.")
 
