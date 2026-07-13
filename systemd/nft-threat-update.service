@@ -17,7 +17,7 @@ LockPersonality=true
 RestrictRealtime=true
 SystemCallArchitectures=native
 WorkingDirectory=/opt/nft-firewall
-ExecStart=/usr/bin/sudo -n /usr/local/bin/fw threat-update
+ExecStart=/usr/bin/sudo -n /usr/local/lib/nft-firewall/fw-threat-update
 Environment=PYTHONPATH=/opt/nft-firewall/src
 StandardOutput=journal
 StandardError=journal

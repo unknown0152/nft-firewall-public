@@ -557,12 +557,7 @@ class SshAlertDaemon:
         from utils.keybase import notify
 
         geo     = _geo_label(ip)
-        fw = Path("/usr/local/bin/fw")
-        if fw.exists():
-            cmd = ["sudo", str(fw), "block", ip]
-        else:
-            main_py = str(_PROJECT_ROOT / "src" / "main.py")
-            cmd = ["sudo", sys.executable, main_py, "block", ip]
+        cmd = ["sudo", "/usr/local/lib/nft-firewall/fw-action", "block", ip]
 
         result = subprocess.run(
             cmd,

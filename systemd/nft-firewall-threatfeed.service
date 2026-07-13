@@ -14,4 +14,4 @@ ProtectKernelModules=true
 LockPersonality=true
 RestrictRealtime=true
 SystemCallArchitectures=native
-ExecStart=/usr/bin/sudo -n /usr/local/bin/fw threat-update
+ExecStart=/usr/bin/sudo -n /usr/local/lib/nft-firewall/fw-threat-update

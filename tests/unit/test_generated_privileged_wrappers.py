@@ -27,6 +27,7 @@ def wrappers(tmp_path, monkeypatch):
             "/usr/bin/ip",
             "/usr/sbin/conntrack",
             "/usr/bin/systemctl",
+            "/usr/local/bin/fw",
         ):
             content = content.replace(binary, "/bin/echo")
         dest = tmp_path / path.name
@@ -75,6 +76,10 @@ def run_wrapper(wrappers: dict[str, Path], name: str, *args: str):
         ("fw-nft", ("list", "ruleset", "extra")),
         ("fw-nft", ("list", "ruleset;id")),
         ("fw-nft", ("--check", "/tmp/rules.conf")),
+        ("fw-action", ("safe-apply", "cosmos-vpn-secure")),
+        ("fw-action", ("block", "0.0.0.0/0")),
+        ("fw-action", ("status", "extra")),
+        ("fw-threat-update", ("extra",)),
     ],
 )
 def test_wrappers_reject_privilege_boundary_bypasses(wrappers, name, args):
@@ -96,6 +101,10 @@ def test_wrappers_reject_privilege_boundary_bypasses(wrappers, name, args):
         ("fw-nft", ("delete", "rule", "ip", "firewall", "input", "handle", "42")),
         ("fw-nft", ("list", "ruleset")),
         ("fw-nft", ("--check", "--file", "/tmp/rules.conf")),
+        ("fw-action", ("status",)),
+        ("fw-action", ("block", "203.0.113.7")),
+        ("fw-action", ("allow", "203.0.113.7", "30m")),
+        ("fw-threat-update", ()),
     ],
 )
 def test_wrappers_keep_exact_watchdog_and_knock_operations(wrappers, name, args):

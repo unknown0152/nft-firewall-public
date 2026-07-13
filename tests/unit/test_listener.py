@@ -183,6 +183,9 @@ class TestRunCli:
 
         assert rc == 0
         assert mock_run.called
+        assert mock_run.call_args.args[0][:2] == [
+            "sudo", "/usr/local/lib/nft-firewall/fw-action"
+        ]
 
 
 # ── _dispatch ─────────────────────────────────────────────────────────────────

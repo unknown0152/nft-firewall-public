@@ -397,11 +397,8 @@ class KeybaseListener:
             print(f"[SECURITY] Too many arguments for {subcmd!r}: {args!r} — blocked", flush=True)
             return 1, f"Too many arguments supplied for {subcmd!r}"
 
-        fw = "/usr/local/bin/fw"
-        if Path(fw).exists():
-            cmd = ["sudo", fw] + list(args)
-        else:
-            cmd = ["sudo", "python3", str(_MAIN_PY)] + list(args)
+        action_wrapper = "/usr/local/lib/nft-firewall/fw-action"
+        cmd = ["sudo", action_wrapper] + list(args)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             output = strip_ansi((r.stdout or r.stderr or "(no output)").strip())

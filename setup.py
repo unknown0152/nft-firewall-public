@@ -826,7 +826,8 @@ def step4_install_sudoers() -> None:
         "",
         "# Firewall & VPN operations via argument-checking wrapper scripts.",
         f"{SYSTEM_USER} ALL=(root) NOPASSWD: \\",
-        f"    {FW_BIN}, \\",
+        f"    {WRAPPER_DIR}/fw-action, \\",
+        f"    {WRAPPER_DIR}/fw-threat-update, \\",
         f"    {WRAPPER_DIR}/fw-nft, \\",
         f"    {WRAPPER_DIR}/fw-wg, \\",
         f"    {WRAPPER_DIR}/fw-wg-quick, \\",
@@ -1323,6 +1324,44 @@ case "${1:-}" in
     ;;
 esac
 echo "fw-systemctl: denied arguments: $*" >&2
+exit 126
+""")
+    emit("fw-action", r"""#!/usr/bin/env bash
+set -euo pipefail
+
+valid_target() {
+  local value="$1" octet prefix
+  [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]] || return 1
+  IFS=./ read -r a b c d prefix <<<"$value"
+  for octet in "$a" "$b" "$c" "$d"; do
+    [ "$octet" -le 255 ] || return 1
+  done
+  [ -z "${prefix:-}" ] || { [ "$prefix" -ge 8 ] && [ "$prefix" -le 32 ]; }
+}
+
+case "${1:-}" in
+  status|rules|ip-list|access)
+    [ "$#" -eq 1 ] && exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/local/bin/fw "$1"
+    ;;
+  block|unblock|disallow)
+    [ "$#" -eq 2 ] && valid_target "$2" \
+      && exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/local/bin/fw "$1" "$2"
+    ;;
+  allow)
+    if { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } && valid_target "$2"; then
+      if [ "$#" -eq 2 ] || [[ "$3" =~ ^[1-9][0-9]*(s|m|h|d|w)$ ]]; then
+        exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/local/bin/fw "$@"
+      fi
+    fi
+    ;;
+esac
+echo "fw-action: denied arguments" >&2
+exit 126
+""")
+    emit("fw-threat-update", """#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 0 ] && exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/local/bin/fw threat-update
+echo "fw-threat-update: no arguments permitted" >&2
 exit 126
 """)
     _ok(f"Installed sudo wrapper scripts in {WRAPPER_DIR}")

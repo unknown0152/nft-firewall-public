@@ -145,6 +145,9 @@ def test_sudoers_uses_fw_admin_and_not_legacy_nft_firewall(monkeypatch, tmp_path
     assert "fw-admin ALL=(root) NOPASSWD:" in content
     assert "nft-firewall ALL=" not in content
     assert "/usr/local/lib/nft-firewall/fw-nft" in content
+    assert "/usr/local/lib/nft-firewall/fw-action" in content
+    assert "/usr/local/lib/nft-firewall/fw-threat-update" in content
+    assert "    /usr/local/bin/fw," not in content
     assert "/opt/nft-firewall/src/main.py *" not in content
 
 
