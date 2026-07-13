@@ -6,6 +6,16 @@ Wants=network-online.target wg-quick@wg0.service
 [Service]
 Type=simple
 User=fw-admin
+UMask=0077
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
 WorkingDirectory=/opt/nft-firewall
 # Attempt to start VPN if config exists (requires sudoers grant for fw-admin)
 ExecStartPre=-/usr/bin/sudo /usr/local/lib/nft-firewall/fw-systemctl start wg-quick@wg0.service

@@ -6,6 +6,16 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=fw-admin
+UMask=0077
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
 WorkingDirectory=/opt/nft-firewall
 Environment=NFT_FIREWALL_WEBUI_HOST=127.0.0.1
 Environment=NFT_FIREWALL_WEBUI_PORT=8787

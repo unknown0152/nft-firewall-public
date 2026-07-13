@@ -4,4 +4,14 @@ Description=NFT Firewall doctor check
 [Service]
 Type=oneshot
 User=fw-admin
+UMask=0077
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
 ExecStart=/usr/local/bin/fw doctor

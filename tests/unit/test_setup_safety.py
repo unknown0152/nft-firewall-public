@@ -119,6 +119,26 @@ def test_firewall_threatfeed_service_uses_real_cli_command():
     assert "ExecStart=/usr/bin/sudo -n /usr/local/bin/fw threat-update" in legacy
 
 
+def test_all_firewall_services_have_baseline_systemd_hardening():
+    service_dir = Path(__file__).resolve().parent.parent.parent / "systemd"
+    required = {
+        "UMask=0077",
+        "PrivateTmp=true",
+        "ProtectClock=true",
+        "ProtectControlGroups=true",
+        "ProtectHostname=true",
+        "ProtectKernelLogs=true",
+        "ProtectKernelModules=true",
+        "LockPersonality=true",
+        "RestrictRealtime=true",
+        "SystemCallArchitectures=native",
+    }
+
+    for service in service_dir.glob("*.service"):
+        directives = set(service.read_text().splitlines())
+        assert required <= directives, f"{service.name} missing {sorted(required - directives)}"
+
+
 def test_watchdog_unit_uses_privileged_systemctl_wrapper():
     service = (
         Path(__file__).resolve().parent.parent.parent
