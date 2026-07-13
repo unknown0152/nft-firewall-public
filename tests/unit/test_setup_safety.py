@@ -132,9 +132,10 @@ def test_systemctl_wrapper_skips_start_when_wireguard_interface_exists():
     setup_py = Path(__file__).resolve().parent.parent.parent / "setup.py"
     text = setup_py.read_text()
 
-    assert 'unit="${2%.service}"' in text
-    assert 'iface="${unit#wg-quick@}"' in text
-    assert '/usr/bin/ip link show dev "$iface"' in text
+    assert 'vpn_if="@VPN_IF@"' in text
+    assert 'unit="wg-quick@${vpn_if}.service"' in text
+    assert '[ "$#" -ne 2 ] || [ "${2:-}" != "$unit" ]' in text
+    assert '/usr/bin/ip link show dev "$vpn_if"' in text
     assert 'exit 0' in text
 
 

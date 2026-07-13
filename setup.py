@@ -1101,6 +1101,20 @@ def _configured_vpn_interface(default: str = "wg0") -> str:
     return vpn_if
 
 
+def _configured_ssh_port(default: int = 22) -> int:
+    """Return the configured SSH port for exact privileged wrapper rules."""
+    cfg = _read_install_config()
+    try:
+        port = cfg.getint("network", "ssh_port", fallback=default)
+    except ValueError:
+        _warn(f"Invalid ssh_port; falling back to {default}")
+        return default
+    if not 1 <= port <= 65535:
+        _warn(f"Invalid ssh_port {port!r}; falling back to {default}")
+        return default
+    return port
+
+
 def _wireguard_runtime_ready() -> bool:
     """Return True when watchdog can reasonably start during install."""
     vpn_if = _configured_vpn_interface()
@@ -1176,10 +1190,19 @@ def _write_executable(path: Path, content: str) -> None:
 
 def _install_sudo_wrappers() -> None:
     """Install root wrapper scripts that validate privileged command arguments."""
-    _write_executable(WRAPPER_DIR / "fw-nft", """#!/usr/bin/env bash
+    vpn_if = _configured_vpn_interface()
+    ssh_port = str(_configured_ssh_port())
+
+    def emit(name: str, content: str) -> None:
+        content = content.replace("@VPN_IF@", vpn_if).replace("@SSH_PORT@", ssh_port)
+        _write_executable(WRAPPER_DIR / name, content)
+
+    emit("fw-nft", r"""#!/usr/bin/env bash
 # Wrapper installed by nft-firewall setup.py
 # Restricts privileged nftables operations to a strict allowlist.
 set -euo pipefail
+vpn_if="@VPN_IF@"
+ssh_port="@SSH_PORT@"
 
 # 1. Deny shell injection tokens in ANY argument
 for arg in "$@"; do
@@ -1198,46 +1221,62 @@ case "${1:-}" in
       tables) [ "$#" -eq 3 ] && [ "${2:-}" = "tables" ] && [ "${3:-}" = "ip6" ] && exec /usr/sbin/nft list tables ip6 ;;
     esac
     ;;
-  add|delete)
-    if [ "$#" -eq 6 ] && [ "${2:-}" = "element" ] && [ "${3:-}" = "ip" ] && [ "${4:-}" = "firewall" ]; then
-       case "${5:-}" in blocked_ips|trusted_ips|dk_ips|geowhitelist_ips) exec /usr/sbin/nft "$1" element ip firewall "$5" "$6" ;; esac
-    fi
-    if [ "$1" = "delete" ] && [ "$#" -eq 7 ] && [ "${2:-}" = "rule" ] && [ "${3:-}" = "ip" ] && [ "${4:-}" = "firewall" ] && [ "${5:-}" = "input" ] && [ "${6:-}" = "handle" ]; then
+  delete)
+    if [ "$#" -eq 7 ] && [ "${2:-}" = "rule" ] && [ "${3:-}" = "ip" ] && [ "${4:-}" = "firewall" ] && [ "${5:-}" = "input" ] && [ "${6:-}" = "handle" ] && [[ "${7:-}" =~ ^[0-9]+$ ]]; then
        exec /usr/sbin/nft delete rule ip firewall input handle "$7"
+    fi
+    ;;
+  knock-add)
+    if [ "$#" -eq 2 ] && [[ "${2:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      IFS=. read -r a b c d <<<"$2"
+      for octet in "$a" "$b" "$c" "$d"; do
+        [ "$octet" -le 255 ] || { echo "fw-nft: invalid IPv4 address" >&2; exit 126; }
+      done
+      exec /usr/sbin/nft --echo --json add rule ip firewall input \
+        iifname "$vpn_if" ip saddr "$2" tcp dport "$ssh_port" accept
     fi
     ;;
   --check) [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] && exec /usr/sbin/nft --check --file "$3" ;;
   --file|-f) [ "$#" -eq 2 ] && [ "${2:-}" = "/etc/nftables.conf" ] && exec /usr/sbin/nft -f /etc/nftables.conf ;;
-
-  --echo) [ "$#" -eq 8 ] && [ "${2:-}" = "--json" ] && [ "${3:-}" = "add" ] && [ "${4:-}" = "rule" ] && [ "${5:-}" = "ip" ] && [ "${6:-}" = "firewall" ] && [ "${7:-}" = "input" ] && exec /usr/sbin/nft --echo --json add rule ip firewall input "$8" ;;
 esac
 echo "fw-nft: denied arguments: $*" >&2
 exit 126
 """)
-    _write_executable(WRAPPER_DIR / "fw-wg", """#!/usr/bin/env bash
+    emit("fw-wg", r"""#!/usr/bin/env bash
 set -euo pipefail
+vpn_if="@VPN_IF@"
 case "${1:-}" in
-  show) exec /usr/bin/wg "$@" ;;
-  set) [ "${3:-}" = "peer" ] && [ "${5:-}" = "endpoint" ] && exec /usr/bin/wg "$@" ;;
+  show)
+    [ "$#" -eq 3 ] && [ "${2:-}" = "$vpn_if" ] && case "${3:-}" in
+      latest-handshakes|transfer) exec /usr/bin/wg "$@" ;;
+    esac
+    ;;
+  set)
+    if [ "$#" -eq 6 ] && [ "${2:-}" = "$vpn_if" ] && [ "${3:-}" = "peer" ] \
+       && [[ "${4:-}" =~ ^[A-Za-z0-9+/]{43}=$ ]] && [ "${5:-}" = "endpoint" ] \
+       && [[ "${6:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}$ ]]; then
+      exec /usr/bin/wg "$@"
+    fi
+    ;;
 esac
 echo "fw-wg: denied arguments: $*" >&2
 exit 126
 """)
-    _write_executable(WRAPPER_DIR / "fw-wg-quick", """#!/usr/bin/env bash
+    emit("fw-wg-quick", """#!/usr/bin/env bash
 set -euo pipefail
+vpn_if="@VPN_IF@"
 case "${1:-}" in
-  up|down) exec /usr/bin/wg-quick "$@" ;;
+  up|down) [ "$#" -eq 2 ] && [ "${2:-}" = "$vpn_if" ] && exec /usr/bin/wg-quick "$@" ;;
 esac
 echo "fw-wg-quick: denied arguments: $*" >&2
 exit 126
 """)
-    _write_executable(WRAPPER_DIR / "fw-ip", """#!/usr/bin/env bash
+    emit("fw-ip", """#!/usr/bin/env bash
 set -euo pipefail
+vpn_if="@VPN_IF@"
 case "${1:-}" in
-  link) case "${2:-}" in show|delete) exec /usr/bin/ip "$@" ;; esac ;;
-  addr) [ "${2:-}" = "show" ] && exec /usr/bin/ip "$@" ;;
-  -4) [ "${2:-}" = "addr" ] && [ "${3:-}" = "show" ] && exec /usr/bin/ip "$@" ;;
-  -o) [ "${2:-}" = "link" ] && [ "${3:-}" = "show" ] && exec /usr/bin/ip "$@" ;;
+  link) [ "$#" -eq 3 ] && [ "${3:-}" = "$vpn_if" ] && case "${2:-}" in show|delete) exec /usr/bin/ip "$@" ;; esac ;;
+  addr) [ "$#" -eq 3 ] && [ "${2:-}" = "show" ] && [ "${3:-}" = "$vpn_if" ] && exec /usr/bin/ip "$@" ;;
 esac
 echo "fw-ip: denied arguments: $*" >&2
 exit 126
@@ -1258,29 +1297,29 @@ esac
 echo "fw-docker: denied arguments: $*" >&2
 exit 126
 """)
-    _write_executable(WRAPPER_DIR / "fw-conntrack", """#!/usr/bin/env bash
+    emit("fw-conntrack", """#!/usr/bin/env bash
 set -euo pipefail
-[ "${1:-}" = "-F" ] && exec /usr/sbin/conntrack "$@"
+[ "$#" -eq 1 ] && [ "${1:-}" = "-F" ] && exec /usr/sbin/conntrack -F
 echo "fw-conntrack: denied arguments: $*" >&2
 exit 126
 """)
-    _write_executable(WRAPPER_DIR / "fw-systemctl", """#!/usr/bin/env bash
+    emit("fw-systemctl", """#!/usr/bin/env bash
 set -euo pipefail
+vpn_if="@VPN_IF@"
+unit="wg-quick@${vpn_if}.service"
 case "${1:-}" in
   start)
-    case "${2:-}" in
-      wg-quick@*.service|wg-quick@*)
-        unit="${2%.service}"
-        iface="${unit#wg-quick@}"
-        if /usr/bin/ip link show dev "$iface" >/dev/null 2>&1; then
-          exit 0
-        fi
-        exec /usr/bin/systemctl "$@"
-        ;;
-    esac
+    if [ "$#" -ne 2 ] || [ "${2:-}" != "$unit" ]; then
+      echo "fw-systemctl: denied arguments: $*" >&2
+      exit 126
+    fi
+    if /usr/bin/ip link show dev "$vpn_if" >/dev/null 2>&1; then
+      exit 0
+    fi
+    exec /usr/bin/systemctl start "$unit"
     ;;
   stop|restart|reload)
-    case "${2:-}" in wg-quick@*.service|wg-quick@*) exec /usr/bin/systemctl "$@" ;; esac
+    [ "$#" -eq 2 ] && [ "${2:-}" = "$unit" ] && exec /usr/bin/systemctl "$1" "$unit"
     ;;
 esac
 echo "fw-systemctl: denied arguments: $*" >&2

@@ -65,21 +65,19 @@ class PortKnockDaemon:
             raise ValueError(f"knockd: refusing to insert untrusted source IP {ip!r}: {result.reason}")
         ip = result.value
 
-        # The fw-nft wrapper's `--echo` allowlist accepts exactly:
-        #   --echo --json add rule ip firewall input <BODY>
-        # where <BODY> is a SINGLE argv token. Build the rule body as one
-        # string so the wrapper's `[ "$#" -eq 8 ]` check passes; nft itself
-        # parses the body internally.
-        body = (
-            f'iifname "{self._vpn_iface}" '
-            f'ip saddr {ip} '
-            f'tcp dport {self._ssh_port} accept'
-        )
-        cmd = [
-            "nft", "--echo", "--json", "add", "rule", "ip", "firewall", "input",
-            body,
-        ]
-        cmd = self._privileged_nft(cmd)
+        if os.geteuid() == 0:
+            cmd = [
+                "nft", "--echo", "--json", "add", "rule", "ip", "firewall", "input",
+                "iifname", self._vpn_iface,
+                "ip", "saddr", ip,
+                "tcp", "dport", str(self._ssh_port), "accept",
+            ]
+        elif self._wrapper_path.exists():
+            # The privileged wrapper owns every structural part of the rule.
+            # The unprivileged daemon supplies only the validated source IP.
+            cmd = ["sudo", str(self._wrapper_path), "knock-add", ip]
+        else:
+            raise RuntimeError(f"Security wrapper missing ({self._wrapper_path}) — failing closed")
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         if r.returncode != 0:
             raise RuntimeError(f"nft add rule failed: {r.stderr.strip()}")

@@ -122,13 +122,8 @@ def test_output_chain_blocked_ips_drop_precedes_killswitch_accept():
     )
 
 
-def test_knockd_add_rule_matches_fw_nft_wrapper_echo_form(tmp_path, monkeypatch):
-    """The fw-nft wrapper accepts only:
-       --echo --json add rule ip firewall input <BODY>
-    where ``<BODY>`` is a SINGLE argv token. knockd previously split BODY
-    into many tokens, so the wrapper denied every call. The fix is to build
-    BODY as one string so the wrapper's `[ "$#" -eq 8 ]` check passes.
-    """
+def test_knockd_add_rule_uses_fixed_shape_privileged_operation(tmp_path, monkeypatch):
+    """Unprivileged knockd passes only a validated source IP to the wrapper."""
     import json
     import subprocess
     from daemons import knockd as knockd_mod
@@ -160,15 +155,10 @@ def test_knockd_add_rule_matches_fw_nft_wrapper_echo_form(tmp_path, monkeypatch)
     assert handle == "42"
 
     cmd = captured["cmd"]
-    # ["sudo", "<wrapper>", "--echo", "--json", "add", "rule", "ip", "firewall", "input", "<BODY>"]
+    # The root-owned wrapper supplies interface, port, table, chain, and verdict.
     assert cmd[0] == "sudo"
     assert cmd[1] == str(fake_wrapper)
-    assert cmd[2:9] == ["--echo", "--json", "add", "rule", "ip", "firewall", "input"]
-    assert len(cmd) == 10, f"wrapper requires exactly 8 trailing args; got {cmd[2:]}"
-    body = cmd[9]
-    assert 'iifname "wg0"' in body
-    assert "ip saddr 1.2.3.4" in body
-    assert "tcp dport 22 accept" in body
+    assert cmd[2:] == ["knock-add", "1.2.3.4"]
 
 
 def test_output_chain_has_single_broad_wg_accept():
