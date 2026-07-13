@@ -481,6 +481,29 @@ def test_keybase_chatops_ready_requires_working_wrapper(monkeypatch, tmp_path):
     assert calls[0][1]["env"]["NFT_FIREWALL_KEYBASE_USER"] == "botuser"
 
 
+def test_keybase_wrapper_is_limited_to_required_chat_operations(monkeypatch, tmp_path):
+    import setup
+
+    wrapper = tmp_path / "nft-keybase-notify"
+    monkeypatch.setattr(setup, "KEYBASE_WRAPPER", wrapper)
+    monkeypatch.setattr(
+        setup.pwd,
+        "getpwnam",
+        lambda _user: type("PW", (), {"pw_dir": "/home/bot", "pw_uid": 1000})(),
+    )
+    monkeypatch.setattr(setup, "_ok", lambda *_a, **_kw: None)
+
+    setup._install_keybase_wrapper("bot")
+    text = wrapper.read_text()
+
+    assert "case \"${1:-}\" in" in text
+    assert "whoami)" in text
+    assert "chat)" in text
+    for verb in ("list-channels", "create-channel", "send", "upload", "api"):
+        assert f"{verb})" in text
+    assert "denied Keybase operation" in text
+
+
 def test_keybase_chatops_ready_rejects_logged_out_wrapper(monkeypatch, tmp_path):
     import configparser
     import setup
@@ -695,7 +718,7 @@ def test_reconfigure_defaults_preserve_installed_config_from_temp_checkout(monke
     assert cfg.get("keybase", "target_user") == "blackflagdata"
 
 
-def test_install_dir_is_root_owned_not_fw_admin(monkeypatch):
+def test_install_dir_is_root_owned_not_fw_admin(monkeypatch, tmp_path):
     """INSTALL_DIR (code) must NOT be chowned to fw-admin.
 
     A daemon running as fw-admin must not be able to rewrite
@@ -712,14 +735,16 @@ def test_install_dir_is_root_owned_not_fw_admin(monkeypatch):
     monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
     monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
 
-    # Stop mkdir/chmod from touching the host
-    class _Stub:
-        def __init__(self, p): self._p = p
-        def __str__(self): return str(self._p)
-        def mkdir(self, *a, **kw): pass
-        def chmod(self, *a, **kw): pass
-    monkeypatch.setattr(setup, "FIREWALL_DIRS", tuple(_Stub(p) for p in setup.FIREWALL_DIRS))
-    monkeypatch.setattr(setup, "COSMOS_COMPOSE_DIR", _Stub(setup.COSMOS_COMPOSE_DIR))
+    install_dir = tmp_path / "opt/nft-firewall"
+    lib_dir = tmp_path / "var/lib/nft-firewall"
+    log_dir = tmp_path / "var/log/nft-firewall"
+    etc_dir = tmp_path / "etc/nft-firewall"
+    monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
+    monkeypatch.setattr(setup, "LIB_DIR", lib_dir)
+    monkeypatch.setattr(setup, "LOG_DIR", log_dir)
+    monkeypatch.setattr(setup, "ETC_DIR", etc_dir)
+    monkeypatch.setattr(setup, "LOCK_DIR", tmp_path / "var/lib/nft-firewall-locks")
+    monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
 
     setup.step3_scaffold_dirs()
 
@@ -1079,8 +1104,8 @@ def test_step7_skips_start_when_wireguard_interface_already_exists(monkeypatch, 
     assert ["systemctl", "restart", "wg-quick@wg-test"] not in calls
 
 
-def test_state_dirs_remain_fw_admin_owned(monkeypatch):
-    """Runtime state/log dirs must stay fw-admin-owned so daemons can write."""
+def test_state_dirs_are_root_owned_shared_sticky_namespaces(monkeypatch, tmp_path):
+    """Services may create own files but cannot replace another owner's state."""
     import setup
 
     chown_calls = []
@@ -1090,25 +1115,28 @@ def test_state_dirs_remain_fw_admin_owned(monkeypatch):
     monkeypatch.setattr(setup, "_warn", lambda *a, **kw: None)
     monkeypatch.setattr(setup, "_header", lambda *a, **kw: None)
 
-    class _Stub:
-        def __init__(self, p): self._p = p
-        def __str__(self): return str(self._p)
-        def mkdir(self, *a, **kw): pass
-        def chmod(self, *a, **kw): pass
-    monkeypatch.setattr(setup, "FIREWALL_DIRS", tuple(_Stub(p) for p in setup.FIREWALL_DIRS))
-    monkeypatch.setattr(setup, "COSMOS_COMPOSE_DIR", _Stub(setup.COSMOS_COMPOSE_DIR))
+    install_dir = tmp_path / "opt/nft-firewall"
+    lib_dir = tmp_path / "var/lib/nft-firewall"
+    log_dir = tmp_path / "var/log/nft-firewall"
+    etc_dir = tmp_path / "etc/nft-firewall"
+    monkeypatch.setattr(setup, "INSTALL_DIR", install_dir)
+    monkeypatch.setattr(setup, "LIB_DIR", lib_dir)
+    monkeypatch.setattr(setup, "LOG_DIR", log_dir)
+    monkeypatch.setattr(setup, "ETC_DIR", etc_dir)
+    monkeypatch.setattr(setup, "LOCK_DIR", tmp_path / "var/lib/nft-firewall-locks")
+    monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
 
     setup.step3_scaffold_dirs()
 
-    fw_admin = setup.SYSTEM_USER
     for state_dir in (setup.LIB_DIR, setup.LOG_DIR):
         path_str = str(state_dir)
         matching = [c for c in chown_calls if c[0] == "chown" and c[-1] == path_str]
         assert matching, f"no chown call for {state_dir}; calls={chown_calls}"
         owners = [(c[2] if c[1] == "-R" else c[1]) for c in matching]
-        assert any(o.startswith(f"{fw_admin}:") for o in owners), (
-            f"{state_dir} must remain fw-admin-owned; got {owners!r}"
+        assert "root:fw-admin" in owners, (
+            f"{state_dir} must be root-owned with shared group; got {owners!r}"
         )
+        assert state_dir.stat().st_mode & 0o1777 == 0o1770
 
 
 def test_copytree_replace_skips_self_copy(monkeypatch, tmp_path):

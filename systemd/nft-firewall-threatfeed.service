@@ -3,7 +3,8 @@ Description=NFT Firewall threat feed update
 
 [Service]
 Type=oneshot
-User=fw-admin
+User=nft-threatfeed
+SupplementaryGroups=fw-admin
 UMask=0077
 PrivateTmp=true
 ProtectClock=true

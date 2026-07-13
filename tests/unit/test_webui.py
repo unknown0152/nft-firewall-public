@@ -41,11 +41,12 @@ def test_webui_renders_read_only_dashboard():
     assert "method=\"post\"" not in html.lower()
 
 
-def test_webui_systemd_unit_is_localhost_only_and_fw_admin():
+def test_webui_systemd_unit_is_localhost_only_and_isolated():
     unit = Path(__file__).resolve().parent.parent.parent / "systemd" / "nft-webui.service"
     text = unit.read_text()
 
-    assert "User=fw-admin" in text
+    assert "User=nft-webui" in text
+    assert "User=fw-admin" not in text
     assert "NFT_FIREWALL_WEBUI_HOST=127.0.0.1" in text
     assert "NFT_FIREWALL_WEBUI_PORT=8787" in text
     assert "ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py webui daemon" in text

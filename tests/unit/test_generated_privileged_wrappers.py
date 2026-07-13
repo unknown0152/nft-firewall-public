@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -94,12 +95,13 @@ def wrappers(tmp_path, monkeypatch):
 def run_wrapper(
     wrappers: dict[str, Path], name: str, *args: str, env: dict[str, str] | None = None
 ):
+    effective_env = {**os.environ, "SUDO_USER": "fw-admin"} if env is None else env
     return subprocess.run(
         ["bash", str(wrappers[name]), *args],
         capture_output=True,
         text=True,
         check=False,
-        env=env,
+        env=effective_env,
     )
 
 
@@ -206,6 +208,28 @@ def test_nft_check_parses_root_owned_snapshot_not_mutable_source(wrappers):
     assert 'grep -Eq' in wrapper_text and '"$snapshot"' in wrapper_text
     assert '--file "$snapshot"' in wrapper_text
     assert '--file /proc/self/fd/3' not in check_branch
+
+
+def test_read_only_webui_cannot_use_nft_mutation_modes(wrappers):
+    env = {**os.environ, "SUDO_USER": "nft-webui"}
+
+    denied = run_wrapper(
+        wrappers, "fw-nft", "knock-add", "203.0.113.7", env=env
+    )
+    allowed = run_wrapper(wrappers, "fw-nft", "list", "ruleset", env=env)
+
+    assert denied.returncode == 126
+    assert allowed.returncode == 0
+
+
+def test_ssh_alert_can_block_but_cannot_grant_trusted_access(wrappers):
+    env = {**os.environ, "SUDO_USER": "nft-ssh-alert"}
+
+    block = run_wrapper(wrappers, "fw-action", "block", "203.0.113.7", env=env)
+    allow = run_wrapper(wrappers, "fw-action", "allow", "203.0.113.7", env=env)
+
+    assert block.returncode == 0
+    assert allow.returncode == 126
 
 
 def test_wg_inspection_preserves_base64_padding(wrappers):

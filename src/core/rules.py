@@ -118,6 +118,8 @@ class RulesetConfig:
     trusted_ips: List[str] = field(default_factory=list)
     geowhitelist_ips: List[str] = field(default_factory=list)
     dk_ips:      List[str] = field(default_factory=list)
+    threatfeed_ips: List[str] = field(default_factory=list)
+    geo_blocked_ips: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Reject unsafe network inputs before any nft syntax is generated."""
@@ -146,6 +148,8 @@ class RulesetConfig:
         self.trusted_ips = _validated_set_members("trusted_ips", self.trusted_ips)
         self.geowhitelist_ips = _validated_set_members("geowhitelist_ips", self.geowhitelist_ips)
         self.dk_ips = _validated_set_members("dk_ips", self.dk_ips)
+        self.threatfeed_ips = _validated_set_members("threatfeed_ips", self.threatfeed_ips)
+        self.geo_blocked_ips = _validated_set_members("geo_blocked_ips", self.geo_blocked_ips)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -462,6 +466,18 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
     )
     _emit_dynamic_set(
         L,
+        "threatfeed_ips",
+        "Threat-feed owned addresses.",
+        cfg.threatfeed_ips,
+    )
+    _emit_dynamic_set(
+        L,
+        "geo_blocked_ips",
+        "Country geoblock owned prefixes.",
+        cfg.geo_blocked_ips,
+    )
+    _emit_dynamic_set(
+        L,
         "docker_nets",
         "Docker bridge networks — internal container networks.",
         docker_nets,
@@ -485,6 +501,8 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
     a("        ct state invalid drop")
     # Global block list (highest priority after connection tracking)
     a("        ip saddr @blocked_ips drop")
+    a("        ip saddr @threatfeed_ips drop")
+    a("        ip saddr @geo_blocked_ips drop")
     a("")
 
     a("        # Trusted admin IPs — SSH and Web override (before LAN/VPN restriction)")
@@ -592,6 +610,8 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
     a("")
     a("        # Block outbound to blocked IPs (even if they were trusted)")
     a("        ip daddr @blocked_ips drop")
+    a("        ip daddr @threatfeed_ips drop")
+    a("        ip daddr @geo_blocked_ips drop")
     a("")
     a(f"        {OPH} meta mark {cfg.vpn_fwmark} ip daddr {cfg.vpn_server_ip} udp dport {cfg.vpn_server_port} accept  # WG bootstrap — fwmark-locked")
     a(f"        {OPH} ip daddr {cfg.lan_net} accept                         # LAN stays local")

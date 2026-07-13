@@ -58,6 +58,8 @@ SET_BLOCKED:   str  = "blocked_ips"
 SET_TRUSTED:   str  = "trusted_ips"
 SET_WHITELIST: str  = "geowhitelist_ips"
 SET_DK:        str  = "dk_ips"
+SET_THREATFEED: str = "threatfeed_ips"
+SET_GEO_BLOCKED: str = "geo_blocked_ips"
 TABLE:         str  = "ip firewall"
 
 _SETS_STATE_FILE: Path = Path("/var/lib/nft-firewall/dynamic-sets.json")
@@ -66,7 +68,10 @@ _DEFAULT_LOCK_DIR: Path = Path("/var/lib/nft-firewall-locks")
 _LOCK_DIR: Path = _DEFAULT_LOCK_DIR
 _LOCK_TIMEOUT_SECONDS: float = 10.0
 _LOCK_LOCAL = threading.local()
-_KNOWN_SETS: tuple[str, ...] = (SET_BLOCKED, SET_TRUSTED, SET_WHITELIST, SET_DK)
+_KNOWN_SETS: tuple[str, ...] = (
+    SET_BLOCKED, SET_TRUSTED, SET_WHITELIST, SET_DK,
+    SET_THREATFEED, SET_GEO_BLOCKED,
+)
 
 
 # ── Apply & validate ──────────────────────────────────────────────────────────

@@ -41,13 +41,8 @@ def test_sync_persists_only_successfully_blocked_ips(monkeypatch, tmp_path):
     )
 
 
-def test_sync_treats_ip_covered_by_existing_cidr_as_satisfied(monkeypatch, tmp_path):
-    """A feed IP covered by a broader block is effective but not feed-owned.
-
-    nftables interval sets reject an exact /32 that overlaps an existing CIDR.
-    The feed must neither fail the whole sync nor claim ownership of that /32,
-    because removing the broader block later must cause the feed to retry it.
-    """
+def test_sync_uses_owner_set_even_when_manual_set_has_broader_cidr(monkeypatch, tmp_path):
+    """Producer-specific sets permit safe overlaps with manual blocks."""
     state_file = tmp_path / "threatfeed-state.json"
     monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
     monkeypatch.setattr(
@@ -64,9 +59,9 @@ def test_sync_treats_ip_covered_by_existing_cidr_as_satisfied(monkeypatch, tmp_p
     fake_state_module.unblock_ip = lambda _ip, **_kw: True
     monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
 
-    assert threatfeed.sync() == (1, 0)
-    assert calls == ["198.51.100.7"]
-    assert threatfeed._load_state() == {"198.51.100.7"}
+    assert threatfeed.sync() == (2, 0)
+    assert set(calls) == {"47.1.2.3", "198.51.100.7"}
+    assert threatfeed._load_state() == {"47.1.2.3", "198.51.100.7"}
 
 
 def test_sync_does_not_trust_stale_persistent_cidr(monkeypatch, tmp_path):
@@ -89,6 +84,24 @@ def test_sync_does_not_trust_stale_persistent_cidr(monkeypatch, tmp_path):
     assert threatfeed.sync() == (1, 0)
     assert calls == ["47.1.2.3"]
     assert threatfeed._load_state() == {"47.1.2.3"}
+
+
+def test_sync_readds_saved_feed_entry_missing_from_live_owner_set(monkeypatch, tmp_path):
+    state_file = tmp_path / "threatfeed-state.json"
+    state_file.write_text('{"ips": ["47.1.2.3"]}')
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    monkeypatch.setattr(threatfeed, "_fetch_feed", lambda _url: ["47.1.2.3"])
+
+    calls = []
+    fake_state_module = type("S", (), {})()
+    fake_state_module.SET_THREATFEED = "threatfeed_ips"
+    fake_state_module.set_list = lambda _name, **_kw: []
+    fake_state_module.set_add = lambda name, ip: calls.append((name, ip)) or True
+    fake_state_module.set_del = lambda _name, _ip: True
+    monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
+
+    assert threatfeed.sync() == (1, 0)
+    assert calls == [("threatfeed_ips", "47.1.2.3")]
 
 
 def test_sync_persists_only_successfully_unblocked_ips(monkeypatch, tmp_path):
@@ -245,11 +258,11 @@ def test_root_saved_state_remains_readable_by_daemon_group(monkeypatch, tmp_path
     assert list(tmp_path.glob("threatfeed-state.json.*.tmp")) == []
 
 
-def test_threatfeed_lock_refuses_symlinks(monkeypatch, tmp_path):
+def test_threatfeed_state_refuses_symlinks(monkeypatch, tmp_path):
     state_file = tmp_path / "threatfeed-state.json"
     target = tmp_path / "sensitive"
     target.write_text("do not touch")
-    state_file.with_name(state_file.name + ".lock").symlink_to(target)
+    state_file.symlink_to(target)
     monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
 
     with pytest.raises(OSError):

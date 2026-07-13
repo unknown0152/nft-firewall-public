@@ -204,6 +204,8 @@ def _build_ruleset_config(cfg: configparser.ConfigParser, profile_name: str):
         trusted_ips        = dynamic_sets.get(state.SET_TRUSTED, []),
         geowhitelist_ips   = dynamic_sets.get(state.SET_WHITELIST, []),
         dk_ips             = dynamic_sets.get(state.SET_DK, []),
+        threatfeed_ips     = dynamic_sets.get(state.SET_THREATFEED, []),
+        geo_blocked_ips    = dynamic_sets.get(state.SET_GEO_BLOCKED, []),
     )
 
     # RUNTIME VALIDATION: Ensure interfaces actually exist when NOT in preflight/install mode
@@ -1588,7 +1590,7 @@ def _managed_report_image_dir() -> "Path | None":
         return None
     try:
         info = os.lstat(_REPORT_IMAGE_DIR)
-        expected_uid = pwd.getpwnam("fw-admin").pw_uid
+        expected_uid = pwd.getpwnam("nft-reporter").pw_uid
         expected_gid = grp.getgrnam("nft-report").gr_gid
     except (KeyError, OSError):
         return None

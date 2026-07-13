@@ -3,7 +3,8 @@ Description=NFT Firewall doctor check
 
 [Service]
 Type=oneshot
-User=fw-admin
+User=nft-doctor
+SupplementaryGroups=fw-admin
 UMask=0077
 PrivateTmp=true
 ProtectClock=true

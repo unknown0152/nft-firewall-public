@@ -56,6 +56,18 @@ def _detect_admin_user() -> str:
 
 SYSTEM_USER        = "fw-admin"
 REPORT_GROUP       = "nft-report"
+REPORT_USER        = "nft-reporter"
+SERVICE_USERS      = {
+    "watchdog": "nft-watchdog",
+    "listener": "nft-listener",
+    "ssh-alert": "nft-ssh-alert",
+    "webui": "nft-webui",
+    "metrics": "nft-metrics",
+    "report": REPORT_USER,
+    "doctor": "nft-doctor",
+    "threatfeed": "nft-threatfeed",
+    "knockd": "nft-knockd",
+}
 LEGACY_SYSTEM_USER = "nft-firewall"
 ADMIN_USER         = _detect_admin_user()
 MEDIA_USER         = "media"
@@ -255,7 +267,7 @@ def _remove_supplementary_group(user: str, group: str) -> None:
 def _reconcile_report_group(keybase_user: str) -> None:
     """Restrict report-image access to the service and current Keybase user."""
     _ensure_group(REPORT_GROUP)
-    desired = {SYSTEM_USER}
+    desired = {REPORT_USER}
     if keybase_user:
         desired.add(keybase_user)
 
@@ -661,18 +673,22 @@ def step1_create_system_user() -> None:
 
     _migrate_legacy_system_user()
     _ensure_user(SYSTEM_USER, system=True, home=SYSTEM_HOME, shell="/bin/false")
+    for service_user in SERVICE_USERS.values():
+        _ensure_user(service_user, system=True, home=SYSTEM_HOME, shell="/bin/false")
+        _ensure_supplementary_group(service_user, SYSTEM_USER)
     keybase_user = _read_keybase_user()
     _reconcile_report_group(keybase_user)
 
     # 'adm' group membership lets fw-admin read /var/log/auth.log (ssh-alert)
     try:
         grp.getgrnam("adm")
-        _ensure_supplementary_group(SYSTEM_USER, "adm")
+        _ensure_supplementary_group(SERVICE_USERS["ssh-alert"], "adm")
     except KeyError:
         _warn("Group 'adm' not found — ssh-alert may not be able to read auth.log")
 
-    _remove_supplementary_group(SYSTEM_USER, "docker")
-    _ok(f"'{SYSTEM_USER}' is not granted Docker group access")
+    for service_user in (SYSTEM_USER, *SERVICE_USERS.values()):
+        _remove_supplementary_group(service_user, "docker")
+    _ok("No nft-firewall service identity is granted Docker group access")
 
 
 # ── Step 2: Install code ──────────────────────────────────────────────────────
@@ -820,8 +836,9 @@ def step3_scaffold_dirs() -> None:
     escalate to root on the next ``sudo /usr/local/bin/fw …`` invocation.
     Group is fw-admin so service accounts can still read the tree.
 
-    Runtime dirs (LIB_DIR, LOG_DIR, ETC_DIR) stay fw-admin-owned because
-    daemons must write state/logs there.
+    Runtime dirs use the shared fw-admin group. Sticky group-writable state/log
+    directories let each isolated service own its files without letting it
+    replace files owned by another service or root.
     """
     _header("Step 3 — Scaffold Directories & Ownership")
 
@@ -836,10 +853,46 @@ def step3_scaffold_dirs() -> None:
     _ok(f"chown -R root:{SYSTEM_USER}  {INSTALL_DIR}  (code, read-only for fw-admin)")
 
     # Runtime/state: fw-admin-owned (daemons must write here)
-    for d in (LIB_DIR, LOG_DIR, ETC_DIR):
-        d.chmod(0o750)
-        _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(d)])
-        _ok(f"chown -R {SYSTEM_USER}:{SYSTEM_USER}  {d}")
+    for d in (LIB_DIR, LOG_DIR):
+        d.chmod(0o1770)
+        _run(["chown", "-R", f"root:{SYSTEM_USER}", str(d)])
+        _ok(f"chown -R root:{SYSTEM_USER}  {d}")
+    ETC_DIR.chmod(0o750)
+    _run(["chown", "-R", f"root:{SYSTEM_USER}", str(ETC_DIR)])
+    _ok(f"chown -R root:{SYSTEM_USER}  {ETC_DIR}")
+
+    # Pre-create root-authoritative control-plane state so a group member
+    # cannot win a first-writer race in the shared sticky directory.
+    authoritative_state = {
+        LIB_DIR / "dynamic-sets.json": (
+            '{\n  "blocked_ips": [],\n  "trusted_ips": [],\n'
+            '  "geowhitelist_ips": [],\n  "dk_ips": [],\n'
+            '  "threatfeed_ips": [],\n  "geo_blocked_ips": []\n}\n'
+        ),
+        LIB_DIR / "threatfeed-state.json": '{"ips": []}\n',
+        LIB_DIR / "geoblock_state.json": '{}\n',
+    }
+    for path, initial in authoritative_state.items():
+        if not path.exists():
+            path.write_text(initial)
+        path.chmod(0o640)
+        _run(["chown", f"root:{SYSTEM_USER}", str(path)])
+
+    service_owned = {
+        LIB_DIR / "metrics.prom": SERVICE_USERS["metrics"],
+        LIB_DIR / "ssh-alert-ban.json": SERVICE_USERS["ssh-alert"],
+        LIB_DIR / "ssh-alert-auth.json": SERVICE_USERS["ssh-alert"],
+        LIB_DIR / "wg-endpoint-cache.json": SERVICE_USERS["watchdog"],
+        LOG_DIR / "watchdog.log": SERVICE_USERS["watchdog"],
+    }
+    for path, owner in service_owned.items():
+        if path.exists():
+            _run(["chown", f"{owner}:{SYSTEM_USER}", str(path)])
+
+    geo_cache = LIB_DIR / "geoip-cache"
+    geo_cache.mkdir(parents=True, exist_ok=True)
+    geo_cache.chmod(0o750)
+    _run(["chown", "-R", f"root:{SYSTEM_USER}", str(geo_cache)])
 
     # Locks live outside daemon-writable state so fw-admin cannot unlink and
     # replace a locked inode to bypass serialization.
@@ -862,38 +915,52 @@ def step4_install_sudoers() -> None:
     keybase_user = _read_keybase_user()
     _install_sudo_wrappers()
 
-    # Build the sudoers fragment
+    # Build per-service grants. No shared service identity receives the whole
+    # control-plane surface.
+    grants = {
+        SERVICE_USERS["webui"]: ["fw-nft", "fw-wg", "fw-docker"],
+        SERVICE_USERS["doctor"]: ["fw-nft", "fw-wg", "fw-docker"],
+        SERVICE_USERS["metrics"]: ["fw-wg"],
+        SERVICE_USERS["report"]: ["fw-nft", "fw-wg", "fw-docker"],
+        SERVICE_USERS["listener"]: ["fw-action"],
+        SERVICE_USERS["ssh-alert"]: ["fw-action", "fw-nft"],
+        SERVICE_USERS["watchdog"]: [
+            "fw-nft", "fw-wg", "fw-wg-quick", "fw-ip", "fw-conntrack",
+            "fw-systemctl", "fw-docker",
+        ],
+        SERVICE_USERS["threatfeed"]: ["fw-threat-update"],
+        SERVICE_USERS["knockd"]: ["fw-nft"],
+    }
     fragment_lines = [
-        "# nft-firewall — least-privilege grants for the fw-admin service account.",
+        "# nft-firewall — isolated, least-privilege service grants.",
         "# Generated by setup.py — re-run 'sudo python3 /opt/nft-firewall/setup.py install'",
         "# to regenerate after changes.",
         "",
-        f"Defaults:{SYSTEM_USER} !requiretty",
-        "",
-        "# Firewall & VPN operations via argument-checking wrapper scripts.",
-        f"{SYSTEM_USER} ALL=(root) NOPASSWD: \\",
-        f"    {WRAPPER_DIR}/fw-action, \\",
-        f"    {WRAPPER_DIR}/fw-threat-update, \\",
-        f"    {WRAPPER_DIR}/fw-nft, \\",
-        f"    {WRAPPER_DIR}/fw-wg, \\",
-        f"    {WRAPPER_DIR}/fw-wg-quick, \\",
-        f"    {WRAPPER_DIR}/fw-ip, \\",
-        f"    {WRAPPER_DIR}/fw-conntrack, \\",
-        f"    {WRAPPER_DIR}/fw-systemctl, \\",
-        f"    {WRAPPER_DIR}/fw-docker",
-        "",
     ]
+    for user, wrappers in grants.items():
+        fragment_lines += [f"Defaults:{user} !requiretty"]
+        for wrapper_name in wrappers:
+            fragment_lines.append(
+                f"{user} ALL=(root) NOPASSWD: {WRAPPER_DIR}/{wrapper_name}"
+            )
+        fragment_lines.append("")
 
     if keybase_user:
         fragment_lines += [
             "# Keybase notifications — wrapper opens a login session for the Keybase account",
-            f"{SYSTEM_USER} ALL=(root) NOPASSWD: {KEYBASE_WRAPPER}",
+            *[
+                f"{user} ALL=(root) NOPASSWD: {KEYBASE_WRAPPER}"
+                for user in (
+                    SERVICE_USERS["watchdog"], SERVICE_USERS["listener"],
+                    SERVICE_USERS["ssh-alert"], SERVICE_USERS["report"],
+                )
+            ],
             "",
         ]
     else:
         fragment_lines += [
             "# Keybase linux_user not detected in firewall.ini — add manually if needed:",
-            f"# {SYSTEM_USER} ALL=(root) NOPASSWD: {KEYBASE_WRAPPER}",
+            f"# notification service users require: {KEYBASE_WRAPPER}",
             "",
         ]
 
@@ -914,7 +981,7 @@ def step4_install_sudoers() -> None:
     SUDOERS_FILE.chmod(0o440)   # sudo requires 440 or 640
     _ok(f"Installed {SUDOERS_FILE}")
     if keybase_user:
-        _ok(f"Keybase grant: {SYSTEM_USER} may run Keybase wrapper for '{keybase_user}'")
+        _ok(f"Keybase chat grant installed for isolated notification services ({keybase_user})")
     else:
         _warn("Keybase user not configured — add to firewall.ini [keybase] linux_user")
 
@@ -997,6 +1064,48 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         '  echo "Keybase linux_user does not exist: $kb_user" >&2\n'
         "  exit 1\n"
         "fi\n"
+        'caller="${SUDO_USER:-root}"\n'
+        'allowed=0\n'
+        'case "${1:-}" in\n'
+        '  whoami) [[ "$#" -eq 1 ]] && allowed=1 ;;\n'
+        '  chat)\n'
+        '    case "${2:-}" in\n'
+        '      list-channels) [[ "$#" -eq 3 ]] && allowed=1 ;;\n'
+        '      create-channel) [[ "$#" -eq 4 ]] && allowed=1 ;;\n'
+        '      send)\n'
+        '        [[ "$#" -eq 4 || ( "$#" -eq 6 && "${3:-}" = "--channel" ) ]] && allowed=1\n'
+        '        ;;\n'
+        '      upload)\n'
+        '        if [[ "$caller" = "nft-reporter" || "$caller" = "root" ]]; then\n'
+        '          if [[ "$#" -eq 6 && "${3:-}" = "--title" ]]; then allowed=1; fi\n'
+        '          if [[ "$#" -eq 8 && "${3:-}" = "--channel" && "${5:-}" = "--title" ]]; then allowed=1; fi\n'
+        '        fi\n'
+        '        if [[ "$allowed" -eq 1 ]]; then\n'
+        '          upload_path="${!#}"\n'
+        '          resolved_upload="$(/usr/bin/realpath -e -- "$upload_path" 2>/dev/null || true)"\n'
+        '          [[ "$resolved_upload" == /run/nft-firewall-report/*.png ]] || allowed=0\n'
+        '          [[ -f "$resolved_upload" && ! -L "$upload_path" ]] || allowed=0\n'
+        '          [[ "$(/usr/bin/stat -Lc %U:%h -- "$resolved_upload" 2>/dev/null || true)" = "nft-reporter:1" ]] || allowed=0\n'
+        '        fi\n'
+        '        ;;\n'
+        '      api)\n'
+        '        if [[ "$caller" = "nft-listener" || "$caller" = "root" ]] \\\n'
+        '           && [[ "$#" -eq 4 && "${3:-}" = "-m" ]] \\\n'
+        "           && /usr/bin/python3 -c 'import json,sys; p=json.loads(sys.argv[1]); assert p.get(\"method\") in {\"list\",\"read\",\"send\"}' \"$4\" 2>/dev/null; then\n"
+        '          allowed=1\n'
+        '        fi\n'
+        '        ;;\n'
+        '    esac\n'
+        '    ;;\n'
+        'esac\n'
+        'case "$caller" in\n'
+        '  root|nft-listener|nft-reporter|nft-watchdog|nft-ssh-alert) ;;\n'
+        '  *) allowed=0 ;;\n'
+        'esac\n'
+        'if [[ "$allowed" -ne 1 ]]; then\n'
+        '  echo "nft-keybase-notify: denied Keybase operation" >&2\n'
+        '  exit 126\n'
+        'fi\n'
         'kb_uid="$(id -u "$kb_user")"\n'
         'kb_home="$(getent passwd "$kb_user" | cut -d: -f6)"\n'
         'export HOME="$kb_home"\n'
@@ -1264,6 +1373,18 @@ def _install_sudo_wrappers() -> None:
 set -euo pipefail
 vpn_if="@VPN_IF@"
 ssh_port="@SSH_PORT@"
+caller="${SUDO_USER:-root}"
+
+# The same root-owned parser is shared, but each service identity receives only
+# the modes its job requires.
+case "$caller" in
+  nft-webui|nft-reporter) [[ "${1:-}" = "list" ]] || exit 126 ;;
+  nft-doctor) [[ "${1:-}" = "list" || "${1:-}" = "--check" ]] || exit 126 ;;
+  nft-ssh-alert) [[ "${1:-}" = "list" && "${2:-}" = "set" && "${5:-}" = "blocked_ips" ]] || exit 126 ;;
+  nft-knockd) [[ "${1:-}" = "knock-add" || "${1:-}" = "knock-del" ]] || exit 126 ;;
+  nft-watchdog|fw-admin|root) ;;
+  *) echo "fw-nft: caller not authorized: $caller" >&2; exit 126 ;;
+esac
 
 # 1. Deny shell injection tokens in ANY argument
 for arg in "$@"; do
@@ -1277,7 +1398,7 @@ case "${1:-}" in
   list)
     case "${2:-}" in
       ruleset) [ "$#" -eq 2 ] && exec /usr/sbin/nft list ruleset ;;
-      set) [ "$#" -eq 5 ] && [ "${3:-}" = "ip" ] && [ "${4:-}" = "firewall" ] && case "${5:-}" in blocked_ips|trusted_ips|dk_ips|geowhitelist_ips) exec /usr/sbin/nft list set ip firewall "$5" ;; esac ;;
+      set) [ "$#" -eq 5 ] && [ "${3:-}" = "ip" ] && [ "${4:-}" = "firewall" ] && case "${5:-}" in blocked_ips|trusted_ips|dk_ips|geowhitelist_ips|threatfeed_ips|geo_blocked_ips) exec /usr/sbin/nft list set ip firewall "$5" ;; esac ;;
       chain) [ "$#" -eq 5 ] && [ "${3:-}" = "ip" ] && [ "${4:-}" = "firewall" ] && case "${5:-}" in input|output|forward) exec /usr/sbin/nft list chain ip firewall "$5" ;; esac ;;
       tables) [ "$#" -eq 3 ] && [ "${2:-}" = "tables" ] && [ "${3:-}" = "ip6" ] && exec /usr/sbin/nft list tables ip6 ;;
     esac
@@ -1304,7 +1425,7 @@ case "${1:-}" in
   --check)
     if [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] && exec 3<"$3" \
        && [ "$(/usr/bin/stat -Lc %F -- /proc/self/fd/3)" = "regular file" ] \
-       && [ "$(/usr/bin/stat -Lc %U -- /proc/self/fd/3)" = "fw-admin" ]; then
+       && [ "$(/usr/bin/stat -Lc %U -- /proc/self/fd/3)" = "$caller" ]; then
       umask 077
       snapshot_dir="$(/usr/bin/mktemp -d /run/nft-firewall-check.XXXXXX)"
       snapshot="$snapshot_dir/ruleset.conf"
@@ -1470,6 +1591,12 @@ exit 126
 """)
     emit("fw-action", r"""#!/usr/bin/env bash
 set -euo pipefail
+caller="${SUDO_USER:-root}"
+case "$caller" in
+  nft-ssh-alert) [ "${1:-}" = "block" ] || exit 126 ;;
+  nft-listener|fw-admin|root) ;;
+  *) exit 126 ;;
+esac
 
 valid_target() {
   local value="$1" octet prefix

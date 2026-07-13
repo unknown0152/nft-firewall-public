@@ -5,7 +5,8 @@ Wants=network-online.target fail2ban.service
 
 [Service]
 Type=simple
-User=fw-admin
+User=nft-ssh-alert
+SupplementaryGroups=fw-admin adm
 UMask=0077
 PrivateTmp=true
 ProtectClock=true

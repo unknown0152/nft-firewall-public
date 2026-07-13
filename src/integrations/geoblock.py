@@ -100,7 +100,7 @@ def _apply_block_guard(cidr: str) -> bool:
 def block_country(cc: str, force: bool = False) -> "tuple[int, int]":
     """Download and block all CIDRs for country *cc* using optimized aggregation."""
     import ipaddress
-    from core.state import set_add_bulk, SET_BLOCKED
+    from core.state import set_add_bulk, SET_GEO_BLOCKED
     from utils.validation import get_connection_info
 
     cc = cc.upper()
@@ -152,7 +152,7 @@ def block_country(cc: str, force: bool = False) -> "tuple[int, int]":
         return (0, skipped_count)
 
     print(f"  \033[34m→\033[0m Syncing {len(to_add)} elements to live firewall...")
-    blocked_count = set_add_bulk(SET_BLOCKED, to_add)
+    blocked_count = set_add_bulk(SET_GEO_BLOCKED, to_add)
     
     if blocked_count > 0:
         state[cc] = sorted(existing | set(to_add[:blocked_count]))
@@ -166,7 +166,7 @@ def block_country(cc: str, force: bool = False) -> "tuple[int, int]":
 
 def unblock_country(cc: str) -> int:
     """Remove all CIDRs previously blocked for country *cc*."""
-    from core.state import set_del_bulk, SET_BLOCKED
+    from core.state import set_del_bulk, SET_GEO_BLOCKED
 
     cc = cc.upper()
     state = _load_state()
@@ -176,7 +176,7 @@ def unblock_country(cc: str) -> int:
 
     to_remove = state[cc]
     print(f"  \033[34m→\033[0m Removing {len(to_remove)} elements from firewall...")
-    removed = set_del_bulk(SET_BLOCKED, to_remove)
+    removed = set_del_bulk(SET_GEO_BLOCKED, to_remove)
 
     if removed > 0:
         del state[cc]

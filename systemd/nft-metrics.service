@@ -4,7 +4,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-User=fw-admin
+User=nft-metrics
+SupplementaryGroups=fw-admin
 UMask=0077
 PrivateTmp=true
 ProtectClock=true

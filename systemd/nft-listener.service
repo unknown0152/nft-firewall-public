@@ -5,7 +5,8 @@ Wants=network-online.target nft-watchdog.service
 
 [Service]
 Type=simple
-User=fw-admin
+User=nft-listener
+SupplementaryGroups=fw-admin
 UMask=0077
 PrivateTmp=true
 ProtectClock=true

@@ -13,7 +13,6 @@ Public API
 """
 
 import configparser
-import fcntl
 import grp
 import importlib
 import ipaddress
@@ -24,7 +23,7 @@ import stat
 import tempfile
 import urllib.error
 import urllib.request
-from contextlib import contextmanager
+from contextlib import nullcontext
 from pathlib import Path
 
 from utils.validation import validate_block_target
@@ -91,47 +90,6 @@ def _load_config() -> "tuple[str, int, bool]":
 
 # ── State persistence ─────────────────────────────────────────────────────────
 
-@contextmanager
-def _file_lock(lock_file: Path, *, exclusive: bool):
-    """Hold a symlink-safe advisory lock at *lock_file*."""
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(
-        lock_file,
-        os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
-        0o660,
-    )
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise OSError(f"Unsafe threat-feed lock file: {lock_file}")
-        try:
-            os.fchown(fd, -1, grp.getgrnam("fw-admin").gr_gid)
-            os.fchmod(fd, 0o660)
-        except (KeyError, PermissionError, OSError):
-            pass
-        fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
-        yield
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
-
-
-@contextmanager
-def _state_lock(*, exclusive: bool):
-    """Serialize short reads and atomic replacements of persisted state."""
-    lock_file = _STATE_FILE.with_name(_STATE_FILE.name + ".lock")
-    with _file_lock(lock_file, exclusive=exclusive):
-        yield
-
-
-@contextmanager
-def _reconciliation_lock():
-    """Prevent overlapping feed syncs without blocking watchdog state readers."""
-    lock_file = _STATE_FILE.with_name(_STATE_FILE.name + ".reconcile.lock")
-    with _file_lock(lock_file, exclusive=True):
-        yield
-
-
 def _load_state_unlocked() -> "set[str]":
     """Read the persisted IP set from ``_STATE_FILE``.
 
@@ -144,16 +102,17 @@ def _load_state_unlocked() -> "set[str]":
     if not _STATE_FILE.exists():
         return set()
     try:
+        if not stat.S_ISREG(os.lstat(_STATE_FILE).st_mode):
+            raise OSError(f"Unsafe threat-feed state file: {_STATE_FILE}")
         data = json.loads(_STATE_FILE.read_text())
         return set(data.get("ips", []))
-    except Exception:
+    except (json.JSONDecodeError, UnicodeError):
         return set()
 
 
 def _load_state() -> "set[str]":
-    """Read threat-feed state while excluding concurrent replacement."""
-    with _state_lock(exclusive=False):
-        return _load_state_unlocked()
+    """Read an atomic threat-feed ownership snapshot."""
+    return _load_state_unlocked()
 
 
 def _save_state_unlocked(ips: "set[str]") -> None:
@@ -193,9 +152,8 @@ def _save_state_unlocked(ips: "set[str]") -> None:
 
 
 def _save_state(ips: "set[str]") -> None:
-    """Persist threat-feed state under the same lock used by reconciliation."""
-    with _state_lock(exclusive=True):
-        _save_state_unlocked(ips)
+    """Atomically persist threat-feed ownership."""
+    _save_state_unlocked(ips)
 
 
 # ── Feed fetching ─────────────────────────────────────────────────────────────
@@ -301,7 +259,7 @@ def sync(
     url:         str = _DEFAULT_URL,
     max_entries: int = _MAX_ENTRIES_DEFAULT,
 ) -> "tuple[int, int]":
-    """Download the threat feed and synchronise the ``blocked_ips`` nftables set.
+    """Download the threat feed and reconcile its producer-owned nft set.
 
     Diffs the freshly fetched feed against the last-known state and calls
     ``block_ip`` / ``unblock_ip`` only for the delta.  Persists the new state
@@ -320,12 +278,13 @@ def sync(
     tuple[int, int]
         ``(added, removed)`` counts of successfully processed entries.
     """
-    from core.state import block_ip, unblock_ip  # lazy import — avoids nft at import time
+    firewall_state = importlib.import_module("core.state")
 
     if max_entries <= 0:
         raise ValueError("max_entries must be positive")
 
-    with _reconciliation_lock():
+    transaction = getattr(firewall_state, "firewall_transaction_lock", nullcontext)
+    with transaction():
         fetched = _fetch_feed(url)
         if fetched is None:
             raise RuntimeError("threat feed fetch failed; refusing to change firewall state")
@@ -334,45 +293,61 @@ def sync(
 
         fetched_ips = set(fetched)
         new_ips = set(fetched[:max_entries])
-        with _state_lock(exclusive=False):
-            old_ips = _load_state_unlocked()
+        old_ips = _load_state_unlocked()
         minimum_plausible = math.ceil(len(old_ips) * 0.75)
         if old_ips and len(fetched_ips) < minimum_plausible:
             raise RuntimeError(
                 "threat feed is implausibly truncated; refusing bulk removal "
                 f"({len(old_ips)} old entries, {len(fetched_ips)} fetched entries)"
             )
-        to_add = new_ips - old_ips
+        set_name = getattr(firewall_state, "SET_THREATFEED", "threatfeed_ips")
+        if hasattr(firewall_state, "set_list"):
+            live_raw = firewall_state.set_list(set_name, persistent_fallback=False)
+            live_ips = {
+                str(network.network_address)
+                for value in live_raw
+                for network in [ipaddress.ip_network(value, strict=False)]
+                if network.prefixlen == 32
+            }
+        else:
+            # Compatibility for minimal callers; production always provides
+            # set_list and therefore verifies saved ownership against live nft.
+            live_ips = set(old_ips)
+
+        to_add = new_ips - live_ips
         to_remove = old_ips - new_ips
-        existing_blocks = _load_live_block_networks()
 
         # Track only IPs actually changed in nft so failed mutations are retried.
         added_ips: "set[str]" = set()
-        covered_ips: "set[str]" = set()
         for ip in to_add:
             if not _apply_block_guard(ip):
                 continue
-            address = ipaddress.ip_address(ip)
-            if any(address in network for network in existing_blocks):
-                covered_ips.add(ip)
-                continue
-            if block_ip(ip):
+            add = getattr(firewall_state, "set_add", None)
+            ok = add(set_name, ip) if add else firewall_state.block_ip(ip)
+            if ok:
                 added_ips.add(ip)
 
         removed_ips: "set[str]" = set()
+        already_absent: "set[str]" = set()
         for ip in to_remove:
-            if unblock_ip(ip):
+            if ip not in live_ips:
+                already_absent.add(ip)
+                continue
+            delete = getattr(firewall_state, "set_del", None)
+            ok = delete(set_name, ip) if delete else firewall_state.unblock_ip(ip)
+            if ok:
                 removed_ips.add(ip)
 
-        with _state_lock(exclusive=True):
-            _save_state_unlocked((old_ips | added_ips) - removed_ips)
+        failed_removals = to_remove - removed_ips - already_absent
+        satisfied_desired = (new_ips & live_ips) | added_ips
+        _save_state_unlocked(satisfied_desired | failed_removals)
     print(
         f"[threatfeed] sync: +{len(added_ips)} added, "
-        f"{len(covered_ips)} already covered, -{len(removed_ips)} removed"
+        f"{len(new_ips & live_ips)} already live, -{len(removed_ips)} removed"
     )
     failed = (
-        len(to_add) - len(added_ips) - len(covered_ips)
-    ) + (len(to_remove) - len(removed_ips))
+        len(to_add) - len(added_ips)
+    ) + (len(to_remove) - len(removed_ips) - len(already_absent))
     if failed:
         noun = "mutation" if failed == 1 else "mutations"
         raise RuntimeError(f"threat feed sync incomplete: {failed} {noun} failed")

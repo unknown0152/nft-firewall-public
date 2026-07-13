@@ -5,7 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=fw-admin
+User=nft-webui
+SupplementaryGroups=fw-admin
 UMask=0077
 PrivateTmp=true
 ProtectClock=true

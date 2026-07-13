@@ -49,7 +49,10 @@ def test_step1_normalizes_required_user_model(monkeypatch):
     setup.step1_create_system_user()
 
     assert ("fw-admin", True, setup.SYSTEM_HOME, "/bin/false") in ensured_users
-    assert ("fw-admin", "adm") in added_groups
+    for service_user in setup.SERVICE_USERS.values():
+        assert (service_user, True, setup.SYSTEM_HOME, "/bin/false") in ensured_users
+        assert (service_user, "fw-admin") in added_groups
+    assert ("nft-ssh-alert", "adm") in added_groups
     assert reconciled == ["nuc"]
     assert ("fw-admin", "docker") in removed_groups
     assert not any(user == "media" for user, *_ in ensured_users)
@@ -100,8 +103,8 @@ def test_report_group_reconciles_changed_keybase_user(monkeypatch, tmp_path):
 
     setup._reconcile_report_group("newbot")
 
-    assert calls == [["gpasswd", "--members", "fw-admin,newbot", "nft-report"]]
-    assert members == ["fw-admin", "newbot"]
+    assert calls == [["gpasswd", "--members", "newbot,nft-reporter", "nft-report"]]
+    assert members == ["newbot", "nft-reporter"]
 
 
 def test_report_group_reconciliation_fails_closed(monkeypatch):
@@ -145,13 +148,18 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     assert (lock_dir / "dynamic-sets.lock").exists()
     assert ["chown", "root:fw-admin", str(lock_dir)] in calls
     assert ["chown", "root:fw-admin", str(lock_dir / "dynamic-sets.lock")] in calls
-    for path in (lib_dir, log_dir, etc_dir):
-        assert path.stat().st_mode & 0o777 == 0o750
+    for path in (lib_dir, log_dir):
+        assert path.stat().st_mode & 0o777 == 0o770
+        assert path.stat().st_mode & 0o1000
+    assert etc_dir.stat().st_mode & 0o777 == 0o750
     # Code dir is root-owned (group fw-admin) so daemons cannot rewrite their own code.
     assert ["chown", "-R", "root:fw-admin", str(install_dir)] in calls
     # Runtime/state dirs stay fw-admin-owned so daemons can write logs and state.
-    for path in (lib_dir, log_dir, etc_dir):
-        assert ["chown", "-R", "fw-admin:fw-admin", str(path)] in calls
+    for path in (lib_dir, log_dir):
+        assert ["chown", "-R", "root:fw-admin", str(path)] in calls
+    assert ["chown", "-R", "root:fw-admin", str(etc_dir)] in calls
+    for name in ("dynamic-sets.json", "threatfeed-state.json", "geoblock_state.json"):
+        assert ["chown", "root:fw-admin", str(lib_dir / name)] in calls
     assert not any(call[:3] == ["chown", "-R", "media:media"] for call in calls)
 
 
@@ -206,7 +214,7 @@ def test_existing_active_user_skips_home_and_shell_normalization(monkeypatch):
     assert any("shell is /bin/sh" in msg for msg in infos)
 
 
-def test_sudoers_uses_fw_admin_and_not_legacy_nft_firewall(monkeypatch, tmp_path):
+def test_sudoers_uses_per_service_grants_not_shared_fw_admin(monkeypatch, tmp_path):
     import setup
 
     sudoers = tmp_path / "nft-firewall.sudoers"
@@ -223,22 +231,33 @@ def test_sudoers_uses_fw_admin_and_not_legacy_nft_firewall(monkeypatch, tmp_path
     setup.step4_install_sudoers()
     content = sudoers.read_text()
 
-    assert "fw-admin ALL=(root) NOPASSWD:" in content
+    assert "fw-admin ALL=(root) NOPASSWD:" not in content
     assert "nft-firewall ALL=" not in content
-    assert "/usr/local/lib/nft-firewall/fw-nft" in content
-    assert "/usr/local/lib/nft-firewall/fw-action" in content
-    assert "/usr/local/lib/nft-firewall/fw-threat-update" in content
+    assert "nft-webui ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-nft" in content
+    assert "nft-listener ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-action" in content
+    assert "nft-threatfeed ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-threat-update" in content
+    assert "nft-webui ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-action" not in content
     assert "    /usr/local/bin/fw," not in content
     assert "/opt/nft-firewall/src/main.py *" not in content
 
 
-def test_systemd_templates_run_as_fw_admin():
+def test_systemd_templates_use_distinct_service_identities():
     systemd_dir = Path(__file__).resolve().parent.parent.parent / "systemd"
-    service_files = sorted(systemd_dir.glob("nft-*.service"))
+    expected = {
+        "nft-watchdog.service": "nft-watchdog",
+        "nft-listener.service": "nft-listener",
+        "nft-ssh-alert.service": "nft-ssh-alert",
+        "nft-webui.service": "nft-webui",
+        "nft-metrics.service": "nft-metrics",
+        "nft-daily-report.service": "nft-reporter",
+        "nft-firewall-doctor.service": "nft-doctor",
+        "nft-firewall-threatfeed.service": "nft-threatfeed",
+        "nft-knockd.service": "nft-knockd",
+    }
 
-    assert service_files
-    for service in service_files:
-        text = service.read_text()
-        assert "User=fw-admin" in text
+    for name, user in expected.items():
+        text = (systemd_dir / name).read_text()
+        assert f"User={user}" in text
+        assert "User=fw-admin" not in text
         assert "User=root" not in text
         assert "User=nft-firewall" not in text

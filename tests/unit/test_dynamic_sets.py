@@ -13,6 +13,8 @@ def test_generate_ruleset_preloads_persistent_dynamic_sets():
         vpn_server_port="51820",
         blocked_ips=["203.0.113.4/32"],
         trusted_ips=["198.51.100.7/32"],
+        threatfeed_ips=["192.0.2.44/32"],
+        geo_blocked_ips=["5.0.0.0/8"],
         dk_ips=["193.163.0.0/16"],
     )
     ruleset = generate_ruleset(cfg)
@@ -21,6 +23,14 @@ def test_generate_ruleset_preloads_persistent_dynamic_sets():
     assert "elements = { 203.0.113.4/32 }" in ruleset
     assert "elements = { 198.51.100.7/32 }" in ruleset
     assert "elements = { 193.163.0.0/16 }" in ruleset
+    assert "set threatfeed_ips" in ruleset
+    assert "elements = { 192.0.2.44/32 }" in ruleset
+    assert "set geo_blocked_ips" in ruleset
+    assert "elements = { 5.0.0.0/8 }" in ruleset
+    assert "ip saddr @threatfeed_ips drop" in ruleset
+    assert "ip daddr @threatfeed_ips drop" in ruleset
+    assert "ip saddr @geo_blocked_ips drop" in ruleset
+    assert "ip daddr @geo_blocked_ips drop" in ruleset
 
 
 def test_apply_ruleset_uses_named_temp_file(monkeypatch):
