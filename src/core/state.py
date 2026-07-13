@@ -169,12 +169,25 @@ def save_conf(ruleset: str, path: Path = NFT_CONF) -> None:
         Destination path.  Defaults to ``/etc/nftables.conf``.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(ruleset)
-    # 0o644 so the watchdog (running as fw-admin) can read this file directly
-    # for marker validation before triggering an `nft -f` auto-repair. The conf
-    # mirrors the live ruleset (visible via `sudo nft list ruleset`) and contains
-    # no secrets, so world-read is acceptable.
-    path.chmod(0o644)
+    tmp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=path.parent,
+            prefix=path.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            tmp = Path(fh.name)
+            fh.write(ruleset)
+            fh.flush()
+            os.fsync(fh.fileno())
+        # 0o644 so the watchdog can validate markers before requesting reload.
+        tmp.chmod(0o644)
+        os.replace(tmp, path)
+    finally:
+        if tmp and tmp.exists():
+            tmp.unlink(missing_ok=True)
     print(f"[state] Ruleset saved to {path}")
 
 
@@ -432,7 +445,10 @@ def backup_ruleset(backup_dir: Path = _BACKUP_DIR) -> Path:
         detail = (result.stderr or result.stdout or "empty ruleset output").strip()
         raise RuntimeError(f"Cannot snapshot live ruleset: {detail}")
 
-    dest.write_text(result.stdout)
+    snapshot = result.stdout
+    if not re.match(r"^\s*flush\s+ruleset\b", snapshot):
+        snapshot = "flush ruleset\n" + snapshot
+    dest.write_text(snapshot)
 
     dest.chmod(0o600)
     print(f"[state] Backup: {dest}")

@@ -67,6 +67,22 @@ def test_save_conf_writes_world_readable_file(tmp_path):
     assert oct(dest.stat().st_mode & 0o777) == "0o644"
 
 
+def test_save_conf_failure_preserves_previous_complete_file(tmp_path, monkeypatch):
+    dest = tmp_path / "nftables.conf"
+    dest.write_text("known good\n")
+
+    def fail_replace(*_args):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(state.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="disk failure"):
+        state.save_conf("candidate\n", path=dest)
+
+    assert dest.read_text() == "known good\n"
+    assert list(tmp_path.glob("nftables.conf.*.tmp")) == []
+
+
 def test_load_and_save_persistent_sets_validate_and_normalize(tmp_path, capsys):
     path = tmp_path / "dynamic-sets.json"
     path.write_text(json.dumps({
@@ -199,7 +215,7 @@ def test_backup_and_restore_ruleset(tmp_path, monkeypatch):
     monkeypatch.setattr(state.subprocess, "run", fake_run)
 
     backup = state.backup_ruleset(backup_dir=tmp_path)
-    assert backup.read_text() == "table ip firewall {}\n"
+    assert backup.read_text() == "flush ruleset\ntable ip firewall {}\n"
     assert oct(backup.stat().st_mode & 0o777) == "0o600"
 
     state.restore_ruleset(backup_dir=tmp_path)
