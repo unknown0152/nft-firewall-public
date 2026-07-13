@@ -987,10 +987,10 @@ def step4_install_sudoers() -> None:
     # Build per-service grants. No shared service identity receives the whole
     # control-plane surface.
     grants = {
-        SERVICE_USERS["webui"]: ["fw-nft", "fw-wg", "fw-docker"],
+        SERVICE_USERS["webui"]: ["fw-nft", "fw-wg", "fw-ip", "fw-docker"],
         SERVICE_USERS["doctor"]: ["fw-nft", "fw-wg", "fw-docker"],
         SERVICE_USERS["metrics"]: ["fw-nft", "fw-wg"],
-        SERVICE_USERS["report"]: ["fw-nft", "fw-wg", "fw-docker"],
+        SERVICE_USERS["report"]: ["fw-nft", "fw-wg", "fw-ip", "fw-docker"],
         SERVICE_USERS["listener"]: ["fw-action"],
         SERVICE_USERS["ssh-alert"]: ["fw-action", "fw-nft"],
         SERVICE_USERS["watchdog"]: [
@@ -1629,6 +1629,14 @@ tmp_conf="$tmp_dir/${vpn_if}.conf"
     emit("fw-ip", """#!/usr/bin/env bash
 set -euo pipefail
 vpn_if="@VPN_IF@"
+caller="${SUDO_USER:-root}"
+case "$caller" in
+  nft-webui|nft-reporter)
+    case "${1:-}:${2:-}" in link:show|addr:show) ;; *) exit 126 ;; esac
+    ;;
+  nft-watchdog|fw-admin|root) ;;
+  *) exit 126 ;;
+esac
 case "${1:-}" in
   link) [ "$#" -eq 3 ] && [ "${3:-}" = "$vpn_if" ] && case "${2:-}" in show|delete) exec /usr/bin/ip "$@" ;; esac ;;
   addr) [ "$#" -eq 3 ] && [ "${2:-}" = "show" ] && [ "${3:-}" = "$vpn_if" ] && exec /usr/bin/ip "$@" ;;

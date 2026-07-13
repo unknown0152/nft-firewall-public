@@ -255,6 +255,21 @@ def test_read_only_service_cannot_repoint_wireguard_peer(wrappers):
     assert result.returncode == 126
 
 
+@pytest.mark.parametrize("caller", ["nft-webui", "nft-reporter"])
+def test_dashboard_readers_can_inspect_but_not_delete_vpn_interface(
+    wrappers, caller
+):
+    env = {**os.environ, "SUDO_USER": caller}
+
+    link = run_wrapper(wrappers, "fw-ip", "link", "show", "wg0", env=env)
+    addr = run_wrapper(wrappers, "fw-ip", "addr", "show", "wg0", env=env)
+    delete = run_wrapper(wrappers, "fw-ip", "link", "delete", "wg0", env=env)
+
+    assert link.returncode == 0
+    assert addr.returncode == 0
+    assert delete.returncode == 126
+
+
 def test_wg_inspection_preserves_base64_padding(wrappers):
     result = run_wrapper(wrappers, "fw-wg-inspect", "wg0")
 
