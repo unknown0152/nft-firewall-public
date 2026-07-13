@@ -487,9 +487,11 @@ def _build_filter_table(cfg: RulesetConfig, exposed_ports: List[Dict]) -> List[s
     a("        ip saddr @blocked_ips drop")
     a("")
 
-    a("        # Trusted admin IPs — SSH override (before LAN/VPN restriction)")
-    a(f"        {PHY} ip saddr @trusted_ips tcp dport {ssh} accept"
-      "   # admin SSH override")
+    a("        # Trusted admin IPs — SSH and Web override (before LAN/VPN restriction)")
+    a(f"        {PHY} ip saddr @trusted_ips tcp dport {ssh} accept   # admin SSH override")
+    if cfg.cosmos_public_ports:
+        a(f"        {PHY} ip saddr @trusted_ips "
+          f"tcp dport {_pset(cfg.cosmos_public_ports)} accept   # admin Web override")
     a("")
 
     # LOCKDOWN MODE: If geowhitelist is not empty, only selected public/admin

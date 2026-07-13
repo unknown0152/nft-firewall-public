@@ -57,6 +57,17 @@ def test_public_ports_only_allowed_on_wg0():
     assert 'iifname "eth0" tcp dport { 80, 443 } accept' not in ruleset
 
 
+def test_trusted_admins_can_reach_public_web_ports_on_physical_interface():
+    """Preserve the deployed source-restricted physical-interface override."""
+    ruleset = _rules([80, 443])
+
+    assert (
+        'iifname "eth0" ip saddr @trusted_ips tcp dport { 80, 443 } accept'
+        in ruleset
+    )
+    assert 'iifname "eth0" ip saddr @trusted_ips tcp dport 22 accept' in ruleset
+
+
 def test_build_ruleset_config_reads_cosmos_public_ports_from_ini(monkeypatch):
     cfg = configparser.ConfigParser()
     cfg.read_string("""
