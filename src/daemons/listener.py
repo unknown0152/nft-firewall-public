@@ -211,7 +211,7 @@ class KeybaseListener:
             try:
                 cfg = self._load_cfg()    # live reload each tick
                 sleep_for = cfg["poll_interval"]
-                self._poll_once(cfg, authorized, start_ts)
+                self._poll_once(cfg, start_ts)
             except Exception as exc:
                 print(f"[ERROR] Poll error: {exc}", flush=True)
             time.sleep(sleep_for)
@@ -313,11 +313,16 @@ class KeybaseListener:
             print(f"[WARN] _read_recent_msgs: {exc}", flush=True)
             return []
 
-    def _poll_once(self, cfg: Dict, authorized: str, start_ts: float) -> int:
+    def _poll_once(self, cfg: Dict, start_ts: float) -> int:
         """Check all conversations for new !commands since *start_ts*.
 
         Returns the number of commands dispatched.
         """
+        authorized = cfg.get("authorized_user", "").strip()
+        if not authorized or authorized == "your-keybase-username":
+            print("[SECURITY] Authorization is not configured; poll skipped", flush=True)
+            return 0
+
         count = 0
         for convo in self._list_all_convos(cfg):
             channel   = convo.get("channel", {})

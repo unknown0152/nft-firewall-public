@@ -1,6 +1,8 @@
 import json
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -93,24 +95,39 @@ def test_load_and_save_persistent_sets_validate_and_normalize(tmp_path, capsys):
 
 
 def test_persist_set_member_adds_and_removes(monkeypatch):
-    saved = {}
-    monkeypatch.setattr(
-        state,
-        "load_persistent_sets",
-        lambda: {name: [] for name in state._KNOWN_SETS},
-    )
-    monkeypatch.setattr(state, "save_persistent_sets", lambda sets: saved.update(sets))
+    saved = {name: [] for name in state._KNOWN_SETS}
+
+    def update(mutator, **_kwargs):
+        mutator(saved)
+        return saved
+
+    monkeypatch.setattr(state, "_update_persistent_sets", update)
 
     state.persist_set_member(state.SET_TRUSTED, "198.51.100.7/32", present=True)
     assert saved[state.SET_TRUSTED] == ["198.51.100.7/32"]
 
-    monkeypatch.setattr(
-        state,
-        "load_persistent_sets",
-        lambda: {**{name: [] for name in state._KNOWN_SETS}, state.SET_TRUSTED: ["198.51.100.7/32"]},
-    )
     state.persist_set_member(state.SET_TRUSTED, "198.51.100.7/32", present=False)
     assert saved[state.SET_TRUSTED] == []
+
+
+def test_persistent_set_transactions_do_not_lose_concurrent_updates(tmp_path):
+    path = tmp_path / "dynamic-sets.json"
+    state.save_persistent_sets({}, path=path)
+    ips = [f"203.0.113.{n}/32" for n in range(1, 21)]
+
+    def add_one(ip):
+        def mutate(sets):
+            members = set(sets[state.SET_BLOCKED])
+            time.sleep(0.005)  # widen the read-modify-write race window
+            members.add(ip)
+            sets[state.SET_BLOCKED] = sorted(members)
+
+        state._update_persistent_sets(mutate, path=path)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(add_one, ips))
+
+    assert state.load_persistent_sets(path)[state.SET_BLOCKED] == sorted(ips)
 
 
 def test_audit_set_mutation_writes_jsonl(tmp_path, monkeypatch):
@@ -151,18 +168,18 @@ def test_audit_set_mutation_failure_is_nonfatal(tmp_path, capsys):
 
 
 def test_merge_live_sets_into_persistent(monkeypatch):
-    saved = {}
-    monkeypatch.setattr(
-        state,
-        "load_persistent_sets",
-        lambda: {**{name: [] for name in state._KNOWN_SETS}, state.SET_BLOCKED: ["203.0.113.1/32"]},
-    )
+    saved = {**{name: [] for name in state._KNOWN_SETS}, state.SET_BLOCKED: ["203.0.113.1/32"]}
+
+    def update(mutator, **_kwargs):
+        mutator(saved)
+        return saved
+
+    monkeypatch.setattr(state, "_update_persistent_sets", update)
     monkeypatch.setattr(
         state,
         "set_list",
         lambda name, persistent_fallback=False: ["203.0.113.2/32"] if name == state.SET_BLOCKED else [],
     )
-    monkeypatch.setattr(state, "save_persistent_sets", lambda sets: saved.update(sets))
 
     merged = state.merge_live_sets_into_persistent()
 
@@ -230,8 +247,11 @@ def test_set_add_delete_and_list(monkeypatch):
         return _result(cmd)
 
     monkeypatch.setattr(state.subprocess, "run", fake_run)
-    monkeypatch.setattr(state, "load_persistent_sets", lambda: {k: list(v) for k, v in persisted.items()})
-    monkeypatch.setattr(state, "save_persistent_sets", lambda sets: persisted.update(sets))
+    def update(mutator, **_kwargs):
+        mutator(persisted)
+        return persisted
+
+    monkeypatch.setattr(state, "_update_persistent_sets", update)
     monkeypatch.setattr(
         state,
         "_audit_set_mutation",

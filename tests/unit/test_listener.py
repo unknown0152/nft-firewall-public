@@ -85,6 +85,38 @@ class TestPollInterval:
         assert cfg["poll_interval"] == 30
 
 
+class TestLiveAuthorization:
+
+    def test_poll_uses_authorized_user_from_current_config(self):
+        listener = _make_listener()
+        listener._own_username = "firewall-bot"
+        listener._list_all_convos = MagicMock(return_value=[{"channel": {}, "active_at": 1}])
+        listener._read_recent_msgs = MagicMock(return_value=[{
+            "msg": {
+                "id": 1,
+                "sent_at": 2,
+                "sender": {"username": "new-admin"},
+                "content": {"type": "text", "text": {"body": "!status"}},
+                "channel": {},
+            }
+        }])
+        listener._dispatch = MagicMock()
+        cfg = {"authorized_user": "new-admin"}
+
+        count = listener._poll_once(cfg, start_ts=0)
+
+        assert count == 1
+        listener._dispatch.assert_called_once()
+
+    @pytest.mark.parametrize("authorized", ["", "your-keybase-username"])
+    def test_poll_fails_closed_when_reloaded_authorization_is_invalid(self, authorized):
+        listener = _make_listener()
+        listener._list_all_convos = MagicMock()
+
+        assert listener._poll_once({"authorized_user": authorized}, start_ts=0) == 0
+        listener._list_all_convos.assert_not_called()
+
+
 # ── _CMD_WHITELIST completeness ───────────────────────────────────────────────
 
 class TestCmdWhitelist:
