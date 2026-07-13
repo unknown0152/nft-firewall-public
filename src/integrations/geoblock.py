@@ -213,16 +213,11 @@ def whitelist_country(cc: str) -> "tuple[int, int]":
 
 def clear_geowhitelist() -> None:
     """Disable Lockdown Mode by clearing the whitelist set."""
-    from core.state import set_del_bulk, SET_WHITELIST, load_persistent_sets, save_persistent_sets
-    import subprocess
+    from core.state import set_flush, SET_WHITELIST
 
     print(f"  \033[34m→\033[0m Disabling Lockdown Mode...")
-    subprocess.run(["nft", "flush", "set", "ip", "firewall", SET_WHITELIST], capture_output=True)
-    
-    sets = load_persistent_sets()
-    if SET_WHITELIST in sets:
-        sets[SET_WHITELIST] = []
-        save_persistent_sets(sets)
+    if not set_flush(SET_WHITELIST):
+        raise RuntimeError("Failed to clear geowhitelist set")
     print(f"  \033[32m✓\033[0m Lockdown Mode disabled.")
 
 

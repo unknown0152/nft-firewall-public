@@ -1485,6 +1485,12 @@ def step5_deploy_services() -> None:
             "Run setup.py from the repository root."
         )
 
+    # Remove the superseded second threat-feed schedule. Keeping both pairs
+    # allows overlapping reconciliation jobs against the same state file.
+    for legacy in ("nft-threat-update.timer", "nft-threat-update.service"):
+        _run(["systemctl", "disable", "--now", legacy], check=False)
+        (SYSTEMD_DST / legacy).unlink(missing_ok=True)
+
     unit_files = sorted(SYSTEMD_SRC.glob("*.service")) + sorted(SYSTEMD_SRC.glob("*.timer"))
     if not unit_files:
         _die(f"No .service or .timer files found in {SYSTEMD_SRC}")

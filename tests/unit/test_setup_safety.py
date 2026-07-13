@@ -115,8 +115,8 @@ def test_firewall_threatfeed_service_uses_real_cli_command():
     assert "ExecStart=/usr/bin/sudo -n /usr/local/lib/nft-firewall/fw-threat-update" in text
     assert "threatfeed update" not in text
 
-    legacy = service.with_name("nft-threat-update.service").read_text()
-    assert "ExecStart=/usr/bin/sudo -n /usr/local/lib/nft-firewall/fw-threat-update" in legacy
+    assert not service.with_name("nft-threat-update.service").exists()
+    assert not service.with_name("nft-threat-update.timer").exists()
 
 
 def test_all_firewall_services_have_baseline_systemd_hardening():

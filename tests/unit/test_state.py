@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -263,11 +264,16 @@ def test_set_add_delete_and_list(monkeypatch):
         return _result(cmd)
 
     monkeypatch.setattr(state.subprocess, "run", fake_run)
-    def update(mutator, **_kwargs):
-        mutator(persisted)
-        return persisted
-
-    monkeypatch.setattr(state, "_update_persistent_sets", update)
+    monkeypatch.setattr(
+        state,
+        "_load_persistent_sets_unlocked",
+        lambda _path: {k: list(v) for k, v in persisted.items()},
+    )
+    monkeypatch.setattr(
+        state,
+        "_save_persistent_sets_unlocked",
+        lambda sets, _path: persisted.update(sets),
+    )
     monkeypatch.setattr(
         state,
         "_audit_set_mutation",
@@ -284,6 +290,55 @@ def test_set_add_delete_and_list(monkeypatch):
         ("add", state.SET_BLOCKED, ["203.0.113.4/32"]),
         ("delete", state.SET_BLOCKED, ["203.0.113.4/32"]),
     ]
+
+
+def test_live_nft_mutation_and_persistence_share_one_lock(monkeypatch, tmp_path):
+    state_file = tmp_path / "dynamic-sets.json"
+    monkeypatch.setattr(state, "_SETS_STATE_FILE", state_file)
+    active = False
+    lock_entries = 0
+
+    @contextmanager
+    def lock(_path):
+        nonlocal active, lock_entries
+        assert not active, "persistent-state lock must not be nested"
+        active = True
+        lock_entries += 1
+        try:
+            yield
+        finally:
+            active = False
+
+    def fake_run(cmd, **_kwargs):
+        assert active, f"live mutation escaped state lock: {cmd}"
+        return _result(cmd)
+
+    monkeypatch.setattr(state, "_persistent_sets_lock", lock)
+    monkeypatch.setattr(state.subprocess, "run", fake_run)
+    monkeypatch.setattr(state, "_audit_set_mutation", lambda *_a, **_kw: None)
+
+    assert state.set_add_bulk(state.SET_BLOCKED, ["203.0.113.8/32"]) == 1
+    assert state.set_del_bulk(state.SET_BLOCKED, ["203.0.113.8/32"]) == 1
+    assert lock_entries == 2
+
+
+def test_set_flush_clears_live_and_persistent_state(monkeypatch, tmp_path):
+    state_file = tmp_path / "dynamic-sets.json"
+    monkeypatch.setattr(state, "_SETS_STATE_FILE", state_file)
+    state.save_persistent_sets(
+        {state.SET_WHITELIST: ["203.0.113.0/24"]}, path=state_file
+    )
+    calls = []
+    monkeypatch.setattr(
+        state.subprocess,
+        "run",
+        lambda cmd, **_kw: calls.append(cmd) or _result(cmd),
+    )
+    monkeypatch.setattr(state, "_audit_set_mutation", lambda *_a, **_kw: None)
+
+    assert state.set_flush(state.SET_WHITELIST) is True
+    assert calls == [["nft", "flush", "set", "ip", "firewall", state.SET_WHITELIST]]
+    assert state.load_persistent_sets(state_file)[state.SET_WHITELIST] == []
 
 
 def test_set_bulk_failures_and_convenience_validation(monkeypatch):

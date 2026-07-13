@@ -13,11 +13,16 @@ Public API
 """
 
 import configparser
+import fcntl
+import grp
 import ipaddress
 import json
+import math
 import os
+import tempfile
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 from utils.validation import validate_block_target
@@ -84,7 +89,25 @@ def _load_config() -> "tuple[str, int, bool]":
 
 # ── State persistence ─────────────────────────────────────────────────────────
 
-def _load_state() -> "set[str]":
+@contextmanager
+def _state_lock(*, exclusive: bool):
+    lock_file = _STATE_FILE.with_name(_STATE_FILE.name + ".lock")
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o660)
+    try:
+        try:
+            os.fchown(fd, -1, grp.getgrnam("fw-admin").gr_gid)
+            os.fchmod(fd, 0o660)
+        except (KeyError, PermissionError, OSError):
+            pass
+        fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _load_state_unlocked() -> "set[str]":
     """Read the persisted IP set from ``_STATE_FILE``.
 
     Returns
@@ -102,7 +125,13 @@ def _load_state() -> "set[str]":
         return set()
 
 
-def _save_state(ips: "set[str]") -> None:
+def _load_state() -> "set[str]":
+    """Read threat-feed state while excluding concurrent replacement."""
+    with _state_lock(exclusive=False):
+        return _load_state_unlocked()
+
+
+def _save_state_unlocked(ips: "set[str]") -> None:
     """Atomically persist *ips* to ``_STATE_FILE``.
 
     Writes to a ``.tmp`` sibling file, fsyncs, then replaces the target so
@@ -114,12 +143,34 @@ def _save_state(ips: "set[str]") -> None:
         Set of IP strings to persist.
     """
     _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _STATE_FILE.with_suffix(".tmp")
-    with tmp.open("w") as fh:
-        json.dump({"ips": sorted(ips)}, fh)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, _STATE_FILE)
+    tmp: "Path | None" = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=_STATE_FILE.parent,
+            prefix=_STATE_FILE.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            tmp = Path(fh.name)
+            json.dump({"ips": sorted(ips)}, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.chmod(0o640)
+        try:
+            os.chown(tmp, -1, grp.getgrnam("fw-admin").gr_gid)
+        except (KeyError, PermissionError, OSError):
+            pass
+        os.replace(tmp, _STATE_FILE)
+    finally:
+        if tmp and tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
+def _save_state(ips: "set[str]") -> None:
+    """Persist threat-feed state under the same lock used by reconciliation."""
+    with _state_lock(exclusive=True):
+        _save_state_unlocked(ips)
 
 
 # ── Feed fetching ─────────────────────────────────────────────────────────────
@@ -216,31 +267,39 @@ def sync(
     """
     from core.state import block_ip, unblock_ip  # lazy import — avoids nft at import time
 
-    fetched = _fetch_feed(url)
-    if fetched is None:
-        raise RuntimeError("threat feed fetch failed; refusing to change firewall state")
-    if not fetched:
-        raise RuntimeError("threat feed was empty; refusing to remove existing blocks")
+    if max_entries <= 0:
+        raise ValueError("max_entries must be positive")
 
-    new_ips   = set(fetched[:max_entries])
-    old_ips   = _load_state()
-    to_add    = new_ips - old_ips
-    to_remove = old_ips - new_ips
+    with _state_lock(exclusive=True):
+        fetched = _fetch_feed(url)
+        if fetched is None:
+            raise RuntimeError("threat feed fetch failed; refusing to change firewall state")
+        if not fetched:
+            raise RuntimeError("threat feed was empty; refusing to remove existing blocks")
 
-    # Track only IPs we actually changed in nft. If we persist before
-    # confirming, a failed block_ip silently shows up as "blocked" on the
-    # next sync, the diff skips it, and the firewall drifts from the feed.
-    added_ips: "set[str]" = set()
-    for ip in to_add:
-        if _apply_block_guard(ip) and block_ip(ip):
-            added_ips.add(ip)
+        new_ips = set(fetched[:max_entries])
+        old_ips = _load_state_unlocked()
+        minimum_plausible = math.ceil(len(old_ips) * 0.75)
+        if old_ips and len(new_ips) < minimum_plausible:
+            raise RuntimeError(
+                "threat feed is implausibly truncated; refusing bulk removal "
+                f"({len(old_ips)} old entries, {len(new_ips)} new entries)"
+            )
+        to_add = new_ips - old_ips
+        to_remove = old_ips - new_ips
 
-    removed_ips: "set[str]" = set()
-    for ip in to_remove:
-        if unblock_ip(ip):
-            removed_ips.add(ip)
+        # Track only IPs actually changed in nft so failed mutations are retried.
+        added_ips: "set[str]" = set()
+        for ip in to_add:
+            if _apply_block_guard(ip) and block_ip(ip):
+                added_ips.add(ip)
 
-    _save_state((old_ips | added_ips) - removed_ips)
+        removed_ips: "set[str]" = set()
+        for ip in to_remove:
+            if unblock_ip(ip):
+                removed_ips.add(ip)
+
+        _save_state_unlocked((old_ips | added_ips) - removed_ips)
     print(f"[threatfeed] sync: +{len(added_ips)} added, -{len(removed_ips)} removed")
     failed = (len(to_add) - len(added_ips)) + (len(to_remove) - len(removed_ips))
     if failed:

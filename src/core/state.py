@@ -535,21 +535,20 @@ def set_add_bulk(set_name: str, ips: list[str], timeout: str | None = None) -> i
             fh.write(script)
             tmp = Path(fh.name)
 
-        result = subprocess.run(["nft", "-f", str(tmp)], capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"[state] WARNING: bulk add to {set_name} failed: {result.stderr.strip()}")
-            return 0
+        with _persistent_sets_lock(_SETS_STATE_FILE):
+            result = subprocess.run(["nft", "-f", str(tmp)], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"[state] WARNING: bulk add to {set_name} failed: {result.stderr.strip()}")
+                return 0
 
-        # Persist only permanent entries. A timed grant lives solely in the
-        # live set and expires on its own; persisting it would resurrect it
-        # (without its timeout) on the next ruleset reload.
-        if not timeout:
-            def mutate(sets):
+            # Persist only permanent entries. A timed grant lives solely in
+            # the live set and expires on its own.
+            if not timeout:
+                sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
                 members = set(sets.get(set_name, []))
                 members.update(ips)
                 sets[set_name] = sorted(members)
-
-            _update_persistent_sets(mutate)
+                _save_persistent_sets_unlocked(sets, _SETS_STATE_FILE)
         _audit_set_mutation("add", set_name, ips, timeout=timeout)
         return len(ips)
     finally:
@@ -577,23 +576,44 @@ def set_del_bulk(set_name: str, ips: list[str]) -> int:
             fh.write(script)
             tmp = Path(fh.name)
 
-        result = subprocess.run(["nft", "-f", str(tmp)], capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"[state] WARNING: bulk delete from {set_name} failed: {result.stderr.strip()}")
-            return 0
+        with _persistent_sets_lock(_SETS_STATE_FILE):
+            result = subprocess.run(["nft", "-f", str(tmp)], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"[state] WARNING: bulk delete from {set_name} failed: {result.stderr.strip()}")
+                return 0
 
-        def mutate(sets):
+            sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
             members = set(sets.get(set_name, []))
             for ip in ips:
                 members.discard(ip)
             sets[set_name] = sorted(members)
-
-        _update_persistent_sets(mutate)
+            _save_persistent_sets_unlocked(sets, _SETS_STATE_FILE)
         _audit_set_mutation("delete", set_name, ips)
         return len(ips)
     finally:
         if tmp and tmp.exists():
             tmp.unlink(missing_ok=True)
+
+
+def set_flush(set_name: str) -> bool:
+    """Clear one live set and its persistent members as one transaction."""
+    set_name = _canonical_set_name(set_name)
+    removed: list[str] = []
+    with _persistent_sets_lock(_SETS_STATE_FILE):
+        result = subprocess.run(
+            ["nft", "flush", "set", "ip", "firewall", set_name],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"[state] WARNING: flush of {set_name} failed: {result.stderr.strip()}")
+            return False
+        sets = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
+        removed = list(sets.get(set_name, []))
+        sets[set_name] = []
+        _save_persistent_sets_unlocked(sets, _SETS_STATE_FILE)
+    _audit_set_mutation("flush", set_name, removed)
+    return True
 
 
 def set_list(set_name: str, *, persistent_fallback: bool = True) -> List[str]:
