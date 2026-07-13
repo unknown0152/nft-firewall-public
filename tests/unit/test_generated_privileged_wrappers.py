@@ -222,6 +222,20 @@ def test_read_only_webui_cannot_use_nft_mutation_modes(wrappers):
     assert allowed.returncode == 0
 
 
+def test_metrics_can_read_nft_chains_but_cannot_mutate(wrappers):
+    env = {**os.environ, "SUDO_USER": "nft-metrics"}
+
+    allowed = run_wrapper(
+        wrappers, "fw-nft", "list", "chain", "ip", "firewall", "input", env=env
+    )
+    denied = run_wrapper(
+        wrappers, "fw-nft", "knock-add", "203.0.113.7", env=env
+    )
+
+    assert allowed.returncode == 0
+    assert denied.returncode == 126
+
+
 def test_ssh_alert_can_block_but_cannot_grant_trusted_access(wrappers):
     env = {**os.environ, "SUDO_USER": "nft-ssh-alert"}
 

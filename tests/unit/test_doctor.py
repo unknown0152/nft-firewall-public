@@ -26,7 +26,7 @@ def _patch_doctor_common(monkeypatch, ruleset=None):
     monkeypatch.setattr(
         main,
         "_build_ruleset_config",
-        lambda _cfg, _profile: types.SimpleNamespace(phy_if="eth0", vpn_interface="wg0"),
+        lambda _cfg, _profile, **_kwargs: types.SimpleNamespace(phy_if="eth0", vpn_interface="wg0"),
     )
     monkeypatch.setattr(integrations.docker, "load_registry", lambda: [])
     monkeypatch.setattr(
@@ -53,6 +53,24 @@ def _patch_doctor_common(monkeypatch, ruleset=None):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     return main, core.state
+
+
+def test_doctor_builds_ruleset_without_merging_live_state(monkeypatch):
+    main, state = _patch_doctor_common(monkeypatch)
+    seen = {}
+
+    def build(_cfg, _profile, **kwargs):
+        seen.update(kwargs)
+        return types.SimpleNamespace(phy_if="eth0", vpn_interface="wg0")
+
+    monkeypatch.setattr(main, "_build_ruleset_config", build)
+    monkeypatch.setattr(state, "simulate_apply", lambda *_a, **_kw: (True, ""))
+
+    with pytest.raises(SystemExit) as exc:
+        main._cmd_doctor(types.SimpleNamespace(profile="cosmos-vpn-secure"))
+
+    assert exc.value.code == 0
+    assert seen["merge_live_state"] is False
 
 
 def test_config_sanity_accepts_current_shape():

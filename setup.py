@@ -989,7 +989,7 @@ def step4_install_sudoers() -> None:
     grants = {
         SERVICE_USERS["webui"]: ["fw-nft", "fw-wg", "fw-docker"],
         SERVICE_USERS["doctor"]: ["fw-nft", "fw-wg", "fw-docker"],
-        SERVICE_USERS["metrics"]: ["fw-wg"],
+        SERVICE_USERS["metrics"]: ["fw-nft", "fw-wg"],
         SERVICE_USERS["report"]: ["fw-nft", "fw-wg", "fw-docker"],
         SERVICE_USERS["listener"]: ["fw-action"],
         SERVICE_USERS["ssh-alert"]: ["fw-action", "fw-nft"],
@@ -1461,7 +1461,7 @@ caller="${SUDO_USER:-root}"
 # The same root-owned parser is shared, but each service identity receives only
 # the modes its job requires.
 case "$caller" in
-  nft-webui|nft-reporter) [[ "${1:-}" = "list" ]] || exit 126 ;;
+  nft-webui|nft-metrics|nft-reporter) [[ "${1:-}" = "list" ]] || exit 126 ;;
   nft-doctor) [[ "${1:-}" = "list" || "${1:-}" = "--check" ]] || exit 126 ;;
   nft-ssh-alert) [[ "${1:-}" = "list" && "${2:-}" = "set" && "${5:-}" = "blocked_ips" ]] || exit 126 ;;
   nft-knockd) [[ "${1:-}" = "knock-add" || "${1:-}" = "knock-del" ]] || exit 126 ;;

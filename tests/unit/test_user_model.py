@@ -244,6 +244,7 @@ def test_sudoers_uses_per_service_grants_not_shared_fw_admin(monkeypatch, tmp_pa
     assert "nft-webui ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-nft" in content
     assert "nft-listener ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-action" in content
     assert "nft-threatfeed ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-threat-update" in content
+    assert "nft-metrics ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-nft" in content
     assert "nft-webui ALL=(root) NOPASSWD: /usr/local/lib/nft-firewall/fw-action" not in content
     assert "    /usr/local/bin/fw," not in content
     assert "/opt/nft-firewall/src/main.py *" not in content

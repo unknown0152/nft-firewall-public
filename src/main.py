@@ -104,7 +104,12 @@ def _load_config() -> configparser.ConfigParser:
     return cfg
 
 
-def _build_ruleset_config(cfg: configparser.ConfigParser, profile_name: str):
+def _build_ruleset_config(
+    cfg: configparser.ConfigParser,
+    profile_name: str,
+    *,
+    merge_live_state: bool = True,
+):
     """Build a :class:`~core.rules.RulesetConfig` from INI config + profile.
 
     Reads the ``[network]`` section for topology values and overlays the
@@ -181,7 +186,11 @@ def _build_ruleset_config(cfg: configparser.ConfigParser, profile_name: str):
         ]
 
     container_supernet = cfg.get("network", "container_supernet", fallback="172.16.0.0/12")
-    dynamic_sets = state.merge_live_sets_into_persistent()
+    dynamic_sets = (
+        state.merge_live_sets_into_persistent()
+        if merge_live_state
+        else state.load_persistent_sets()
+    )
     docker_networks = detect_bridge_networks(container_supernet)
 
     conf = RulesetConfig(
@@ -1393,7 +1402,7 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
         checks.append(("config sanity", "ok", "explicit config values parse cleanly"))
 
     try:
-        ruleset_cfg = _build_ruleset_config(cfg, profile)
+        ruleset_cfg = _build_ruleset_config(cfg, profile, merge_live_state=False)
         checks.append(("config", "ok", f"profile={profile} phy_if={ruleset_cfg.phy_if} vpn={ruleset_cfg.vpn_interface}"))
     except (KeyError, ValueError, SystemExit) as exc:
         checks.append(("config", "fail", str(exc)))
