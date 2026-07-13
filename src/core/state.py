@@ -41,6 +41,7 @@ import fcntl
 import subprocess
 import stat
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -64,6 +65,7 @@ _AUDIT_LOG_FILE: Path = Path("/var/log/nft-firewall/audit.jsonl")
 _DEFAULT_LOCK_DIR: Path = Path("/var/lib/nft-firewall-locks")
 _LOCK_DIR: Path = _DEFAULT_LOCK_DIR
 _LOCK_TIMEOUT_SECONDS: float = 10.0
+_LOCK_LOCAL = threading.local()
 _KNOWN_SETS: tuple[str, ...] = (SET_BLOCKED, SET_TRUSTED, SET_WHITELIST, SET_DK)
 
 
@@ -247,6 +249,15 @@ def _audit_set_mutation(
 def _persistent_sets_lock(path: Path):
     """Serialize dynamic-set reads and read-modify-write transactions."""
     del path  # All producers share one lock, independent of writable state paths.
+    depth = getattr(_LOCK_LOCAL, "depth", 0)
+    if depth:
+        _LOCK_LOCAL.depth = depth + 1
+        try:
+            yield
+        finally:
+            _LOCK_LOCAL.depth = depth
+        return
+
     lock_path = _LOCK_DIR / "dynamic-sets.lock"
     lock_dir_info = os.lstat(_LOCK_DIR)
     if not stat.S_ISDIR(lock_dir_info.st_mode) or lock_dir_info.st_mode & 0o022:
@@ -271,6 +282,7 @@ def _persistent_sets_lock(path: Path):
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 locked = True
+                _LOCK_LOCAL.depth = 1
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
@@ -282,8 +294,16 @@ def _persistent_sets_lock(path: Path):
         yield
     finally:
         if locked:
+            _LOCK_LOCAL.depth = 0
             fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+@contextmanager
+def firewall_transaction_lock():
+    """Serialize a full ruleset apply with all dynamic-set mutations."""
+    with _persistent_sets_lock(_SETS_STATE_FILE):
+        yield
 
 
 def _load_persistent_sets_unlocked(path: Path) -> dict[str, list[str]]:

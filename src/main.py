@@ -894,7 +894,7 @@ def _reapply_geoblocks() -> None:
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
-def _cmd_apply(args: argparse.Namespace) -> bool:
+def _cmd_apply_locked(args: argparse.Namespace) -> bool:
     """apply <profile> [--dry-run] [--safe]"""
     import select
     from core.rules import generate_ruleset
@@ -977,6 +977,16 @@ def _cmd_apply(args: argparse.Namespace) -> bool:
         _write_watchdog_markers(ruleset_cfg)
         _reapply_geoblocks()
         return True
+
+
+def _cmd_apply(args: argparse.Namespace) -> bool:
+    """Build and apply a ruleset under the dynamic-state transaction lock."""
+    from core import state
+
+    if args.dry_run:
+        return _cmd_apply_locked(args)
+    with state.firewall_transaction_lock():
+        return _cmd_apply_locked(args)
 
 
 def _cmd_safe_apply(args: argparse.Namespace) -> bool:

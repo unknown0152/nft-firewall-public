@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -35,6 +36,16 @@ def _arrange_apply(monkeypatch, *, stdin_ready: bool, stdin_text: str = "", save
     monkeypatch.setattr(state, "save_conf", save)
     monkeypatch.setattr(state, "restore_ruleset", lambda _path: events.append("restore"))
 
+    @contextmanager
+    def transaction_lock():
+        events.append("lock-enter")
+        try:
+            yield
+        finally:
+            events.append("lock-exit")
+
+    monkeypatch.setattr(state, "firewall_transaction_lock", transaction_lock)
+
     import select
 
     monkeypatch.setattr(select, "select", lambda *_a: ([sys.stdin], [], []) if stdin_ready else ([], [], []))
@@ -48,7 +59,7 @@ def test_safe_apply_rejection_never_persists_candidate(monkeypatch):
     result = main._cmd_apply(argparse.Namespace(profile="test", dry_run=False, safe=True))
 
     assert result is False
-    assert events == ["apply", "restore"]
+    assert events == ["lock-enter", "apply", "restore", "lock-exit"]
 
 
 def test_safe_apply_persists_only_after_explicit_confirmation(monkeypatch):
@@ -57,7 +68,9 @@ def test_safe_apply_persists_only_after_explicit_confirmation(monkeypatch):
     result = main._cmd_apply(argparse.Namespace(profile="test", dry_run=False, safe=True))
 
     assert result is True
-    assert events == ["apply", "save", "markers", "geoblocks"]
+    assert events == [
+        "lock-enter", "apply", "save", "markers", "geoblocks", "lock-exit"
+    ]
 
 
 def test_regular_apply_persists_immediately_after_live_apply(monkeypatch):
@@ -66,7 +79,9 @@ def test_regular_apply_persists_immediately_after_live_apply(monkeypatch):
     result = main._cmd_apply(argparse.Namespace(profile="test", dry_run=False, safe=False))
 
     assert result is True
-    assert events == ["apply", "save", "markers", "geoblocks"]
+    assert events == [
+        "lock-enter", "apply", "save", "markers", "geoblocks", "lock-exit"
+    ]
 
 
 def test_persistence_failure_restores_known_good_live_rules(monkeypatch):
@@ -82,4 +97,4 @@ def test_persistence_failure_restores_known_good_live_rules(monkeypatch):
     with pytest.raises(SystemExit):
         main._cmd_apply(argparse.Namespace(profile="test", dry_run=False, safe=True))
 
-    assert events == ["apply", "save", "restore"]
+    assert events == ["lock-enter", "apply", "save", "restore", "lock-exit"]
