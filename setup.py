@@ -55,6 +55,7 @@ def _detect_admin_user() -> str:
     return "admin"
 
 SYSTEM_USER        = "fw-admin"
+REPORT_GROUP       = "nft-report"
 LEGACY_SYSTEM_USER = "nft-firewall"
 ADMIN_USER         = _detect_admin_user()
 MEDIA_USER         = "media"
@@ -247,6 +248,35 @@ def _remove_supplementary_group(user: str, group: str) -> None:
         _ok(f"Removed '{user}' from group '{group}'")
     else:
         _warn(f"Could not remove '{user}' from group '{group}': {r.stderr.strip()}")
+
+
+def _reconcile_report_group(keybase_user: str) -> None:
+    """Restrict report-image access to the service and current Keybase user."""
+    _ensure_group(REPORT_GROUP)
+    desired = {SYSTEM_USER}
+    if keybase_user:
+        desired.add(keybase_user)
+
+    members = ",".join(sorted(desired))
+    result = _run(
+        ["gpasswd", "--members", members, REPORT_GROUP],
+        check=False,
+    )
+    if result.returncode != 0:
+        _die(
+            f"Could not reconcile '{REPORT_GROUP}' membership: "
+            f"{result.stderr.strip()}"
+        )
+
+    try:
+        actual = set(grp.getgrnam(REPORT_GROUP).gr_mem)
+    except KeyError:
+        _die(f"Report group '{REPORT_GROUP}' disappeared after reconciliation")
+    if actual != desired:
+        _die(
+            f"Report group verification failed: expected {sorted(desired)}, "
+            f"found {sorted(actual)}"
+        )
 
 
 def _ensure_user(name: str, *, system: bool, home: Optional[Path], shell: str) -> None:
@@ -629,6 +659,8 @@ def step1_create_system_user() -> None:
 
     _migrate_legacy_system_user()
     _ensure_user(SYSTEM_USER, system=True, home=SYSTEM_HOME, shell="/bin/false")
+    keybase_user = _read_keybase_user()
+    _reconcile_report_group(keybase_user)
 
     # 'adm' group membership lets fw-admin read /var/log/auth.log (ssh-alert)
     try:
@@ -880,19 +912,18 @@ def step4_install_sudoers() -> None:
 
 
 def _read_keybase_user() -> str:
-    """Return [keybase] linux_user from firewall.ini, checking install dir first."""
-    for ini_path in (
+    """Return [keybase] linux_user, preferring the newly configured source."""
+    source_exists = _CONF_FILE.exists()
+    candidates = (_CONF_FILE,) if source_exists else (
         INSTALL_DIR / "config" / "firewall.ini",
-        Path(__file__).resolve().parent / "config" / "firewall.ini",
-    ):
+    )
+    for ini_path in candidates:
         try:
             cfg = configparser.ConfigParser()
             cfg.read(str(ini_path))
-            u = cfg.get("keybase", "linux_user", fallback="").strip()
-            if u:
-                return u
+            return cfg.get("keybase", "linux_user", fallback="").strip()
         except Exception:
-            pass
+            return ""
     return ""
 
 

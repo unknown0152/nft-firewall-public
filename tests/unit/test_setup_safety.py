@@ -114,10 +114,23 @@ def test_firewall_threatfeed_service_uses_real_cli_command():
 
     assert "ExecStart=/usr/bin/sudo -n /usr/local/lib/nft-firewall/fw-threat-update" in text
     assert "threatfeed update" not in text
-
     assert not service.with_name("nft-threat-update.service").exists()
     assert not service.with_name("nft-threat-update.timer").exists()
 
+
+def test_daily_report_uses_traversable_shared_runtime_directory():
+    text = (
+        Path(__file__).resolve().parent.parent.parent
+        / "systemd"
+        / "nft-daily-report.service"
+    ).read_text()
+
+    assert "PrivateTmp=true" in text
+    assert "RuntimeDirectory=nft-firewall-report" in text
+    assert "Group=nft-report" in text
+    assert "SupplementaryGroups=fw-admin" in text
+    assert "RuntimeDirectoryMode=0710" in text
+    assert "NFT_FIREWALL_REPORT_DIR=/run/nft-firewall-report" in text
 
 def test_all_firewall_services_have_baseline_systemd_hardening():
     service_dir = Path(__file__).resolve().parent.parent.parent / "systemd"

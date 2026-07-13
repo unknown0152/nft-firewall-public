@@ -5,8 +5,12 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=fw-admin
+Group=nft-report
+SupplementaryGroups=fw-admin
 UMask=0077
 PrivateTmp=true
+RuntimeDirectory=nft-firewall-report
+RuntimeDirectoryMode=0710
 ProtectClock=true
 ProtectControlGroups=true
 ProtectHostname=true
@@ -19,6 +23,7 @@ WorkingDirectory=/opt/nft-firewall
 ExecStart=/usr/bin/python3 /opt/nft-firewall/src/main.py firewall-report --weekly --image --image-theme dark
 ExecStartPost=/usr/bin/python3 /opt/nft-firewall/src/main.py maintenance
 Environment=PYTHONPATH=/opt/nft-firewall/src
+Environment=NFT_FIREWALL_REPORT_DIR=/run/nft-firewall-report
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nft-daily-report

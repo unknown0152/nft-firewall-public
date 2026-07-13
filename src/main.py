@@ -26,9 +26,12 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import grp
 import hashlib
 import json
 import os
+import pwd
+import stat
 import subprocess
 import sys
 from datetime import datetime
@@ -43,6 +46,7 @@ _ETC_CONF      = Path("/etc/nft-firewall/firewall.ini")
 _SYSTEM_CONF   = Path("/etc/nft-watchdog.conf")
 _MARKERS_FILE  = Path("/var/lib/nft-firewall/watchdog-markers.json")
 _NFT_CONF      = Path("/etc/nftables.conf")
+_REPORT_IMAGE_DIR = Path("/run/nft-firewall-report")
 _PORT_LABEL_SECTION = "port_labels"
 _PORT_LABEL_PREFIX = {
     "extra_ports": "vpn_tcp",
@@ -1568,8 +1572,33 @@ def _cmd_status(_args: argparse.Namespace) -> None:
     print(build_status_report(cfg_path))
 
 
+def _managed_report_image_dir() -> "Path | None":
+    """Return the systemd-owned image handoff directory when it is authentic."""
+    if os.environ.get("NFT_FIREWALL_REPORT_DIR") != str(_REPORT_IMAGE_DIR):
+        return None
+    try:
+        info = os.lstat(_REPORT_IMAGE_DIR)
+        expected_uid = pwd.getpwnam("fw-admin").pw_uid
+        expected_gid = grp.getgrnam("nft-report").gr_gid
+    except (KeyError, OSError):
+        return None
+    if not stat.S_ISDIR(info.st_mode):
+        return None
+    if info.st_uid != expected_uid or info.st_gid != expected_gid:
+        return None
+    if stat.S_IMODE(info.st_mode) != 0o710:
+        return None
+    return _REPORT_IMAGE_DIR
+
+
 def _cmd_firewall_report(args: argparse.Namespace) -> None:
     """firewall-report — build status report and send it to Keybase."""
+    report_dir: "Path | None" = None
+    if getattr(args, "image", False):
+        report_dir = _managed_report_image_dir()
+        if report_dir is None:
+            _die("Image reports require the managed daily-report service runtime.")
+
     from utils.formatter import build_status_report
     from utils.keybase import notify
 
@@ -1591,11 +1620,16 @@ def _cmd_firewall_report(args: argparse.Namespace) -> None:
         from utils.report_image import render_report_png
 
         try:
-            image_path = render_report_png(report, theme=getattr(args, "image_theme", "dark"))
+            image_path = render_report_png(
+                report,
+                temp_dir=report_dir,
+                output_mode=0o640,
+                theme=getattr(args, "image_theme", "dark"),
+            )
         except RuntimeError as exc:
             _die(str(exc))
 
-        print(f"[report] Image rendered: {image_path}")
+        print("[report] Image rendered for upload")
         uploaded = upload_file(
             image_path,
             title="NFT Firewall Daily Report",

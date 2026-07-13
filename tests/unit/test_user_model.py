@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 
@@ -12,6 +14,7 @@ def test_step1_normalizes_required_user_model(monkeypatch):
     ensured_groups = []
     added_groups = []
     removed_groups = []
+    reconciled = []
 
     monkeypatch.setattr(setup, "_migrate_legacy_system_user", lambda: None)
     monkeypatch.setattr(
@@ -31,17 +34,88 @@ def test_step1_normalizes_required_user_model(monkeypatch):
         lambda user, group: removed_groups.append((user, group)),
     )
     monkeypatch.setattr(setup, "_user_exists", lambda user: user == "nuc")
-    monkeypatch.setattr(setup.grp, "getgrnam", lambda group: SimpleNamespace(gr_name=group))
+    monkeypatch.setattr(setup, "_read_keybase_user", lambda: "nuc")
+    monkeypatch.setattr(
+        setup,
+        "_reconcile_report_group",
+        lambda user: reconciled.append(user),
+    )
+    monkeypatch.setattr(
+        setup.grp,
+        "getgrnam",
+        lambda group: SimpleNamespace(gr_name=group, gr_mem=[]),
+    )
 
     setup.step1_create_system_user()
 
     assert ("fw-admin", True, setup.SYSTEM_HOME, "/bin/false") in ensured_users
     assert ("fw-admin", "adm") in added_groups
+    assert reconciled == ["nuc"]
     assert ("fw-admin", "docker") in removed_groups
     assert not any(user == "media" for user, *_ in ensured_users)
     assert not any(user == "backup" for user, *_ in ensured_users)
     assert not any(user == "deploy" for user, *_ in ensured_users)
     assert "docker" not in ensured_groups
+
+
+def test_report_group_reconciles_changed_keybase_user(monkeypatch, tmp_path):
+    import setup
+
+    installed = tmp_path / "installed" / "config"
+    source = tmp_path / "source" / "config"
+    installed.mkdir(parents=True)
+    source.mkdir(parents=True)
+    (installed / "firewall.ini").write_text(
+        "[keybase]\nlinux_user = oldbot\n"
+    )
+    (source / "firewall.ini").write_text(
+        "[keybase]\nlinux_user = newbot\n"
+    )
+    monkeypatch.setattr(setup, "INSTALL_DIR", installed.parent)
+    monkeypatch.setattr(setup, "_CONF_FILE", source / "firewall.ini")
+
+    assert setup._read_keybase_user() == "newbot"
+
+    (source / "firewall.ini").write_text("[network]\nphy_if = eth0\n")
+    assert setup._read_keybase_user() == ""
+    (source / "firewall.ini").write_text(
+        "[keybase]\nlinux_user = newbot\n"
+    )
+
+    calls = []
+    members = ["fw-admin", "oldbot"]
+    monkeypatch.setattr(setup, "_ensure_group", lambda _group: None)
+
+    def run(cmd, **_kwargs):
+        calls.append(cmd)
+        members[:] = cmd[2].split(",")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(setup, "_run", run)
+    monkeypatch.setattr(
+        setup.grp,
+        "getgrnam",
+        lambda _group: SimpleNamespace(gr_mem=list(members)),
+    )
+
+    setup._reconcile_report_group("newbot")
+
+    assert calls == [["gpasswd", "--members", "fw-admin,newbot", "nft-report"]]
+    assert members == ["fw-admin", "newbot"]
+
+
+def test_report_group_reconciliation_fails_closed(monkeypatch):
+    import setup
+
+    monkeypatch.setattr(setup, "_ensure_group", lambda _group: None)
+    monkeypatch.setattr(
+        setup,
+        "_run",
+        lambda _cmd, **_kw: SimpleNamespace(returncode=1, stderr="denied"),
+    )
+
+    with pytest.raises(SystemExit):
+        setup._reconcile_report_group("newbot")
 
 
 def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):

@@ -523,7 +523,14 @@ def _draw_section(
         y += 7
 
 
-def render_report_png(report: str, *, output_path: str | Path | None = None, theme: str = "dark") -> Path:
+def render_report_png(
+    report: str,
+    *,
+    output_path: str | Path | None = None,
+    temp_dir: str | Path | None = None,
+    output_mode: int = 0o644,
+    theme: str = "dark",
+) -> Path:
     """Render a status report string to a PNG file and return its path.
 
     Pillow is intentionally imported lazily so normal text-only operation does
@@ -661,6 +668,7 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
         tmp = tempfile.NamedTemporaryFile(
             prefix="nft-firewall-report-",
             suffix=".png",
+            dir=temp_dir,
             delete=False,
         )
         output = Path(tmp.name)
@@ -668,5 +676,5 @@ def render_report_png(report: str, *, output_path: str | Path | None = None, the
     else:
         output = Path(output_path)
     image.save(output, "PNG", optimize=True)
-    output.chmod(0o644)
+    output.chmod(output_mode)
     return output
