@@ -19,6 +19,7 @@ def wrappers(tmp_path, monkeypatch):
     emitted: dict[str, Path] = {}
     fake_nft = tmp_path / "fake-nft"
     fake_wg_quick = tmp_path / "fake-wg-quick"
+    fake_stat = tmp_path / "fake-stat"
     wg_config = tmp_path / "wg0.conf"
     fake_nft.write_text(
         "#!/usr/bin/env bash\n"
@@ -29,6 +30,15 @@ def wrappers(tmp_path, monkeypatch):
         "echo nft \"$@\"\n"
     )
     fake_nft.chmod(0o755)
+    fake_stat.write_text(
+        "#!/usr/bin/env bash\n"
+        "target=$(readlink -f \"${@: -1}\")\n"
+        "case \"$*\" in\n"
+        "  *%F*) echo 'regular file' ;;\n"
+        f"  *%U*) case \"$target\" in {tmp_path}/*) echo fw-admin ;; *) echo root ;; esac ;;\n"
+        "esac\n"
+    )
+    fake_stat.chmod(0o755)
     fake_wg_quick.write_text(
         "#!/usr/bin/env bash\n"
         "if [ \"${1:-}\" = up ] && [ -f \"${2:-}\" ]; then cat \"$2\"; else echo wg-quick \"$@\"; fi\n"
@@ -54,8 +64,12 @@ def wrappers(tmp_path, monkeypatch):
         ):
             content = content.replace(binary, "/bin/echo")
         content = content.replace("/usr/sbin/nft", str(fake_nft))
+        content = content.replace("/usr/bin/stat", str(fake_stat))
         content = content.replace(
             'config="/etc/wireguard/${vpn_if}.conf"', f'config="{wg_config}"'
+        )
+        content = content.replace(
+            "/run/nft-wg-recover.XXXXXX", str(tmp_path / "nft-wg-recover.XXXXXX")
         )
         content = content.replace(
             "/usr/local/lib/nft-firewall/fw-wg-recover", "/bin/echo"
@@ -138,6 +152,7 @@ def test_wrappers_reject_privilege_boundary_bypasses(wrappers, name, args):
         ("fw-nft", ("knock-add", "203.0.113.7")),
         ("fw-nft", ("knock-del", "42")),
         ("fw-nft", ("list", "ruleset")),
+        ("fw-nft", ("--check-persisted",)),
         ("fw-wg-quick", ("recover", "wg0", "203.0.113.9")),
         ("fw-action", ("status",)),
         ("fw-action", ("block", "203.0.113.7")),
@@ -159,12 +174,8 @@ def test_knock_wrapper_uses_effective_knock_port(wrappers):
 
 
 def test_nft_check_accepts_only_fw_admin_owned_regular_file(wrappers, tmp_path):
-    import os
-    import pwd
-
     check_file = tmp_path / "nft_check_rules.conf"
     check_file.write_text("table ip test {}\n")
-    os.chown(check_file, pwd.getpwnam("fw-admin").pw_uid, -1)
     check_file.chmod(0o600)
 
     result = run_wrapper(wrappers, "fw-nft", "--check", "--file", str(check_file))
@@ -173,12 +184,8 @@ def test_nft_check_accepts_only_fw_admin_owned_regular_file(wrappers, tmp_path):
 
 
 def test_nft_check_rejects_secondary_includes(wrappers, tmp_path):
-    import os
-    import pwd
-
     check_file = tmp_path / "nft_check_include.conf"
     check_file.write_text('include "/etc/shadow"\n')
-    os.chown(check_file, pwd.getpwnam("fw-admin").pw_uid, -1)
     check_file.chmod(0o600)
 
     result = run_wrapper(wrappers, "fw-nft", "--check", "--file", str(check_file))

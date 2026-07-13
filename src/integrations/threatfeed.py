@@ -91,8 +91,8 @@ def _load_config() -> "tuple[str, int, bool]":
 # ── State persistence ─────────────────────────────────────────────────────────
 
 @contextmanager
-def _state_lock(*, exclusive: bool):
-    lock_file = _STATE_FILE.with_name(_STATE_FILE.name + ".lock")
+def _file_lock(lock_file: Path, *, exclusive: bool):
+    """Hold a symlink-safe advisory lock at *lock_file*."""
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(
         lock_file,
@@ -113,6 +113,22 @@ def _state_lock(*, exclusive: bool):
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+@contextmanager
+def _state_lock(*, exclusive: bool):
+    """Serialize short reads and atomic replacements of persisted state."""
+    lock_file = _STATE_FILE.with_name(_STATE_FILE.name + ".lock")
+    with _file_lock(lock_file, exclusive=exclusive):
+        yield
+
+
+@contextmanager
+def _reconciliation_lock():
+    """Prevent overlapping feed syncs without blocking watchdog state readers."""
+    lock_file = _STATE_FILE.with_name(_STATE_FILE.name + ".reconcile.lock")
+    with _file_lock(lock_file, exclusive=True):
+        yield
 
 
 def _load_state_unlocked() -> "set[str]":
@@ -278,20 +294,22 @@ def sync(
     if max_entries <= 0:
         raise ValueError("max_entries must be positive")
 
-    with _state_lock(exclusive=True):
+    with _reconciliation_lock():
         fetched = _fetch_feed(url)
         if fetched is None:
             raise RuntimeError("threat feed fetch failed; refusing to change firewall state")
         if not fetched:
             raise RuntimeError("threat feed was empty; refusing to remove existing blocks")
 
+        fetched_ips = set(fetched)
         new_ips = set(fetched[:max_entries])
-        old_ips = _load_state_unlocked()
+        with _state_lock(exclusive=False):
+            old_ips = _load_state_unlocked()
         minimum_plausible = math.ceil(len(old_ips) * 0.75)
-        if old_ips and len(new_ips) < minimum_plausible:
+        if old_ips and len(fetched_ips) < minimum_plausible:
             raise RuntimeError(
                 "threat feed is implausibly truncated; refusing bulk removal "
-                f"({len(old_ips)} old entries, {len(new_ips)} new entries)"
+                f"({len(old_ips)} old entries, {len(fetched_ips)} fetched entries)"
             )
         to_add = new_ips - old_ips
         to_remove = old_ips - new_ips
@@ -307,7 +325,8 @@ def sync(
             if unblock_ip(ip):
                 removed_ips.add(ip)
 
-        _save_state_unlocked((old_ips | added_ips) - removed_ips)
+        with _state_lock(exclusive=True):
+            _save_state_unlocked((old_ips | added_ips) - removed_ips)
     print(f"[threatfeed] sync: +{len(added_ips)} added, -{len(removed_ips)} removed")
     failed = (len(to_add) - len(added_ips)) + (len(to_remove) - len(removed_ips))
     if failed:

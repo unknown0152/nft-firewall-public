@@ -41,6 +41,12 @@ def test_watchdog_log_file_uses_runtime_log_dir():
     assert NftWatchdog.LOG_FILE == Path("/var/log/nft-firewall/watchdog.log")
 
 
+def test_watchdog_uses_fixed_persisted_ruleset_check_operation():
+    source = Path(__file__).resolve().parent.parent.parent / "src" / "daemons" / "watchdog.py"
+
+    assert '["nft", "--check-persisted"]' in source.read_text()
+
+
 def test_level3_uses_sanitized_config_inspection_and_fixed_recovery_operation(monkeypatch):
     wd = _wd()
     cfg = _make_cfg()

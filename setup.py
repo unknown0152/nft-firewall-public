@@ -1265,6 +1265,9 @@ case "${1:-}" in
       exec /usr/sbin/nft --check --file /proc/self/fd/3
     fi
     ;;
+  --check-persisted)
+    [ "$#" -eq 1 ] && exec /usr/sbin/nft --check --file /etc/nftables.conf
+    ;;
   --file|-f) [ "$#" -eq 2 ] && [ "${2:-}" = "/etc/nftables.conf" ] && exec /usr/sbin/nft -f /etc/nftables.conf ;;
 esac
 echo "fw-nft: denied arguments: $*" >&2

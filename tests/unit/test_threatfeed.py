@@ -1,6 +1,8 @@
 """tests/unit/test_threatfeed.py — threatfeed sync persistence behaviour."""
 import sys
-import grp
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -121,6 +123,55 @@ def test_sync_rejects_implausibly_truncated_feed(monkeypatch, tmp_path):
     assert calls == []
 
 
+def test_sync_allows_intentional_max_entries_reduction(monkeypatch, tmp_path):
+    state_file = tmp_path / "threatfeed-state.json"
+    state_file.write_text(
+        '{"ips": ["1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"]}'
+    )
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    monkeypatch.setattr(
+        threatfeed,
+        "_fetch_feed",
+        lambda _url: ["1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"],
+    )
+    fake_state_module = type("S", (), {})()
+    fake_state_module.block_ip = lambda _ip, **_kw: True
+    fake_state_module.unblock_ip = lambda _ip, **_kw: True
+    monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
+
+    assert threatfeed.sync(max_entries=1) == (0, 3)
+    assert threatfeed._load_state() == {"1.1.1.1"}
+
+
+def test_state_reader_does_not_wait_for_feed_reconciliation(monkeypatch, tmp_path):
+    state_file = tmp_path / "threatfeed-state.json"
+    state_file.write_text('{"ips": ["1.1.1.1"]}')
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+
+    def slow_fetch(_url):
+        fetch_started.set()
+        release_fetch.wait(timeout=2)
+        return ["1.1.1.1"]
+
+    monkeypatch.setattr(threatfeed, "_fetch_feed", slow_fetch)
+    fake_state_module = type("S", (), {})()
+    fake_state_module.block_ip = lambda _ip, **_kw: True
+    fake_state_module.unblock_ip = lambda _ip, **_kw: True
+    monkeypatch.setitem(sys.modules, "core.state", fake_state_module)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        sync_future = pool.submit(threatfeed.sync)
+        assert fetch_started.wait(timeout=1)
+        read_future = pool.submit(threatfeed.get_entry_count)
+        try:
+            assert read_future.result(timeout=0.25) == 1
+        finally:
+            release_fetch.set()
+        assert sync_future.result(timeout=2) == (0, 0)
+
+
 def test_sync_rejects_nonpositive_max_entries(monkeypatch):
     monkeypatch.setattr(threatfeed, "_fetch_feed", lambda _url: ["1.1.1.1"])
 
@@ -131,10 +182,15 @@ def test_sync_rejects_nonpositive_max_entries(monkeypatch):
 def test_root_saved_state_remains_readable_by_daemon_group(monkeypatch, tmp_path):
     state_file = tmp_path / "threatfeed-state.json"
     monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+    monkeypatch.setattr(
+        threatfeed.grp,
+        "getgrnam",
+        lambda _name: type("Group", (), {"gr_gid": os.getgid()})(),
+    )
 
     threatfeed._save_state({"1.1.1.1"})
 
-    assert state_file.stat().st_gid == grp.getgrnam("fw-admin").gr_gid
+    assert state_file.stat().st_gid == os.getgid()
     assert state_file.stat().st_mode & 0o640 == 0o640
     assert list(tmp_path.glob("threatfeed-state.json.*.tmp")) == []
 

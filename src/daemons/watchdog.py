@@ -1059,7 +1059,7 @@ class NftWatchdog:
                     conf_path = "/etc/nftables.conf"
                     self._log("INFO", f"Attempting auto-repair: nft -f {conf_path}")
                     check_ok, _, check_err = self._run(
-                        ["nft", "--check", "--file", conf_path], timeout=15,
+                        ["nft", "--check-persisted"], timeout=15,
                     )
                     try:
                         conf_content = Path(conf_path).read_text()

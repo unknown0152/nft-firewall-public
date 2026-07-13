@@ -13,14 +13,17 @@ Public API
     metrics_update(iface="wg0")
 """
 
+import grp
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 _METRICS_FILE = Path("/var/lib/nft-firewall/metrics.prom")
+_WG_WRAPPER = Path("/usr/local/lib/nft-firewall/fw-wg")
 
 
 def _count_blocked_ips() -> int:
@@ -42,8 +45,11 @@ def _count_drop_packets() -> int:
 
 def _get_handshake_age(iface: str) -> float:
     try:
+        cmd = ["wg", "show", iface, "latest-handshakes"]
+        if _WG_WRAPPER.exists():
+            cmd = ["sudo", "-n", str(_WG_WRAPPER), "show", iface, "latest-handshakes"]
         result = subprocess.run(
-            ["wg", "show", iface, "latest-handshakes"],
+            cmd,
             capture_output=True,
             text=True,
             timeout=5,
@@ -115,11 +121,27 @@ def metrics_update(iface: str = "wg0") -> None:
         content = "\n".join(lines) + "\n"
 
         _METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _METRICS_FILE.with_suffix(".tmp")
-        with tmp.open("w") as fh:
-            fh.write(content)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, _METRICS_FILE)
+        tmp: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=_METRICS_FILE.parent,
+                prefix=_METRICS_FILE.name + ".",
+                suffix=".tmp",
+                delete=False,
+            ) as fh:
+                tmp = Path(fh.name)
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+            tmp.chmod(0o640)
+            try:
+                os.chown(tmp, -1, grp.getgrnam("fw-admin").gr_gid)
+            except (KeyError, PermissionError, OSError):
+                pass
+            os.replace(tmp, _METRICS_FILE)
+        finally:
+            if tmp and tmp.exists():
+                tmp.unlink(missing_ok=True)
     except Exception:
         return
