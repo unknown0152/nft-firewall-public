@@ -18,6 +18,8 @@ def wrappers(tmp_path, monkeypatch):
 
     emitted: dict[str, Path] = {}
     fake_nft = tmp_path / "fake-nft"
+    fake_wg_quick = tmp_path / "fake-wg-quick"
+    wg_config = tmp_path / "wg0.conf"
     fake_nft.write_text(
         "#!/usr/bin/env bash\n"
         "if [ \"${1:-}\" = -a ] && [ \"${2:-}\" = list ]; then\n"
@@ -27,11 +29,23 @@ def wrappers(tmp_path, monkeypatch):
         "echo nft \"$@\"\n"
     )
     fake_nft.chmod(0o755)
+    fake_wg_quick.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"${1:-}\" = up ] && [ -f \"${2:-}\" ]; then cat \"$2\"; else echo wg-quick \"$@\"; fi\n"
+    )
+    fake_wg_quick.chmod(0o755)
+    wg_config.write_text(
+        "[Interface]\nPrivateKey = private\n"
+        "[Peer]\nPublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"
+        "Endpoint = first.example:51820\n"
+        "[Peer]\nPublicKey = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\n"
+        "Endpoint = second.example:51821\n"
+    )
 
     def write_safe_test_double(path: Path, content: str) -> None:
         # Exercise the generated shell policy without invoking host networking tools.
+        content = content.replace("/usr/bin/wg-quick", str(fake_wg_quick))
         for binary in (
-            "/usr/bin/wg-quick",
             "/usr/bin/wg",
             "/usr/bin/ip",
             "/usr/sbin/conntrack",
@@ -40,6 +54,9 @@ def wrappers(tmp_path, monkeypatch):
         ):
             content = content.replace(binary, "/bin/echo")
         content = content.replace("/usr/sbin/nft", str(fake_nft))
+        content = content.replace(
+            'config="/etc/wireguard/${vpn_if}.conf"', f'config="{wg_config}"'
+        )
         content = content.replace(
             "/usr/local/lib/nft-firewall/fw-wg-recover", "/bin/echo"
         )
@@ -125,6 +142,8 @@ def test_wrappers_reject_privilege_boundary_bypasses(wrappers, name, args):
         ("fw-action", ("status",)),
         ("fw-action", ("block", "203.0.113.7")),
         ("fw-action", ("allow", "203.0.113.7", "30m")),
+        ("fw-action", ("allow", "203.0.113.7", "1d12h")),
+        ("fw-action", ("allow", "203.0.113.7", "48H")),
         ("fw-threat-update", ()),
     ],
 )
@@ -151,3 +170,32 @@ def test_nft_check_accepts_only_fw_admin_owned_regular_file(wrappers, tmp_path):
     result = run_wrapper(wrappers, "fw-nft", "--check", "--file", str(check_file))
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_nft_check_rejects_secondary_includes(wrappers, tmp_path):
+    import os
+    import pwd
+
+    check_file = tmp_path / "nft_check_include.conf"
+    check_file.write_text('include "/etc/shadow"\n')
+    os.chown(check_file, pwd.getpwnam("fw-admin").pw_uid, -1)
+    check_file.chmod(0o600)
+
+    result = run_wrapper(wrappers, "fw-nft", "--check", "--file", str(check_file))
+
+    assert result.returncode == 126, result.stdout + result.stderr
+
+
+def test_wg_inspection_preserves_base64_padding(wrappers):
+    result = run_wrapper(wrappers, "fw-wg-inspect", "wg0")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" in result.stdout
+
+
+def test_wg_recovery_only_rewrites_the_first_peer(wrappers):
+    result = run_wrapper(wrappers, "fw-wg-recover", "wg0", "203.0.113.9")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Endpoint = 203.0.113.9:51820" in result.stdout
+    assert "Endpoint = second.example:51821" in result.stdout

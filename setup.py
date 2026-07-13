@@ -1259,7 +1259,8 @@ case "${1:-}" in
   --check)
     if [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] && exec 3<"$3" \
        && [ "$(/usr/bin/stat -Lc %F -- /proc/self/fd/3)" = "regular file" ] \
-       && [ "$(/usr/bin/stat -Lc %U -- /proc/self/fd/3)" = "fw-admin" ]; then
+       && [ "$(/usr/bin/stat -Lc %U -- /proc/self/fd/3)" = "fw-admin" ] \
+       && ! LC_ALL=C /usr/bin/grep -Eq '(^|[[:space:];{}])include[[:space:]]' <&3; then
       exec /usr/sbin/nft --check --file /proc/self/fd/3
     fi
     ;;
@@ -1314,10 +1315,10 @@ config="/etc/wireguard/${vpn_if}.conf"
 [ -f "$config" ] || exit 1
 exec /usr/bin/awk -F= '
   /^[[:space:]]*PublicKey[[:space:]]*=/ && !seen_key++ {
-    value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print "PublicKey = " value
+    value=substr($0, index($0, "=") + 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print "PublicKey = " value
   }
   /^[[:space:]]*Endpoint[[:space:]]*=/ && !seen_endpoint++ {
-    value=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print "Endpoint = " value
+    value=substr($0, index($0, "=") + 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); print "Endpoint = " value
   }
 ' "$config"
 """)
@@ -1333,9 +1334,25 @@ config="/etc/wireguard/${vpn_if}.conf"
 tmp_dir="$(/usr/bin/mktemp -d /run/nft-wg-recover.XXXXXX)"
 trap '/usr/bin/rm -rf -- "$tmp_dir"' EXIT
 tmp_conf="$tmp_dir/${vpn_if}.conf"
-/usr/bin/sed -E \
-  "s|^([[:space:]]*Endpoint[[:space:]]*=[[:space:]]*)[^:[:space:]]+(:[0-9]+[[:space:]]*)$|\\1${2}\\2|" \
-  "$config" > "$tmp_conf"
+/usr/bin/awk -v new_ip="$2" '
+  BEGIN { in_first_peer=0; seen_peer=0; endpoint_rewritten=0 }
+  /^[[:space:]]*\[Peer\][[:space:]]*$/ {
+    if (!seen_peer) { seen_peer=1; in_first_peer=1 } else { in_first_peer=0 }
+    print; next
+  }
+  /^[[:space:]]*\[[^]]+\][[:space:]]*$/ { in_first_peer=0; print; next }
+  in_first_peer && !endpoint_rewritten && /^[[:space:]]*Endpoint[[:space:]]*=/ {
+    if (match($0, /:[0-9]+[[:space:]]*$/)) {
+      prefix=substr($0, 1, index($0, "="))
+      gsub(/[[:space:]]*$/, "", prefix)
+      port=substr($0, RSTART)
+      $0=prefix " " new_ip port
+      endpoint_rewritten=1
+    }
+  }
+  { print }
+  END { if (!endpoint_rewritten) exit 1 }
+' "$config" > "$tmp_conf"
 /usr/bin/chmod 600 "$tmp_conf"
 /usr/bin/wg-quick up "$tmp_conf"
 """)
@@ -1416,7 +1433,9 @@ case "${1:-}" in
     ;;
   allow)
     if { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } && valid_target "$2"; then
-      if [ "$#" -eq 2 ] || [[ "$3" =~ ^[1-9][0-9]*(s|m|h|d|w)$ ]]; then
+      duration="${3:-}"
+      duration="${duration,,}"
+      if [ "$#" -eq 2 ] || { [[ "$duration" =~ ^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$ ]] && [[ "$duration" =~ [1-9] ]]; }; then
         exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/local/bin/fw "$@"
       fi
     fi
