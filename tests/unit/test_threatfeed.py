@@ -137,3 +137,16 @@ def test_root_saved_state_remains_readable_by_daemon_group(monkeypatch, tmp_path
     assert state_file.stat().st_gid == grp.getgrnam("fw-admin").gr_gid
     assert state_file.stat().st_mode & 0o640 == 0o640
     assert list(tmp_path.glob("threatfeed-state.json.*.tmp")) == []
+
+
+def test_threatfeed_lock_refuses_symlinks(monkeypatch, tmp_path):
+    state_file = tmp_path / "threatfeed-state.json"
+    target = tmp_path / "sensitive"
+    target.write_text("do not touch")
+    state_file.with_name(state_file.name + ".lock").symlink_to(target)
+    monkeypatch.setattr(threatfeed, "_STATE_FILE", state_file)
+
+    with pytest.raises(OSError):
+        threatfeed._load_state()
+
+    assert target.read_text() == "do not touch"

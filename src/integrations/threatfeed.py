@@ -19,6 +19,7 @@ import ipaddress
 import json
 import math
 import os
+import stat
 import tempfile
 import urllib.error
 import urllib.request
@@ -93,8 +94,15 @@ def _load_config() -> "tuple[str, int, bool]":
 def _state_lock(*, exclusive: bool):
     lock_file = _STATE_FILE.with_name(_STATE_FILE.name + ".lock")
     lock_file.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o660)
+    fd = os.open(
+        lock_file,
+        os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o660,
+    )
     try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise OSError(f"Unsafe threat-feed lock file: {lock_file}")
         try:
             os.fchown(fd, -1, grp.getgrnam("fw-admin").gr_gid)
             os.fchmod(fd, 0o660)

@@ -147,6 +147,18 @@ def test_persistent_set_transactions_do_not_lose_concurrent_updates(tmp_path):
     assert state.load_persistent_sets(path)[state.SET_BLOCKED] == sorted(ips)
 
 
+def test_persistent_state_lock_refuses_symlinks(tmp_path):
+    path = tmp_path / "dynamic-sets.json"
+    target = tmp_path / "sensitive"
+    target.write_text("do not touch")
+    path.with_name(path.name + ".lock").symlink_to(target)
+
+    with pytest.raises(OSError):
+        state.load_persistent_sets(path)
+
+    assert target.read_text() == "do not touch"
+
+
 def test_audit_set_mutation_writes_jsonl(tmp_path, monkeypatch):
     monkeypatch.setenv("SUDO_USER", "fw-admin")
     audit = tmp_path / "audit.jsonl"

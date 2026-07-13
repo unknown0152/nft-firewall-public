@@ -1257,10 +1257,10 @@ case "${1:-}" in
     fi
     ;;
   --check)
-    if [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] \
-       && [ -f "$3" ] && [ ! -L "$3" ] \
-       && [ "$(/usr/bin/stat -c %U -- "$3")" = "fw-admin" ]; then
-      exec /usr/sbin/nft --check --file "$3"
+    if [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] && exec 3<"$3" \
+       && [ "$(/usr/bin/stat -Lc %F -- /proc/self/fd/3)" = "regular file" ] \
+       && [ "$(/usr/bin/stat -Lc %U -- /proc/self/fd/3)" = "fw-admin" ]; then
+      exec /usr/sbin/nft --check --file /proc/self/fd/3
     fi
     ;;
   --file|-f) [ "$#" -eq 2 ] && [ "${2:-}" = "/etc/nftables.conf" ] && exec /usr/sbin/nft -f /etc/nftables.conf ;;

@@ -39,6 +39,7 @@ import json
 import os
 import fcntl
 import subprocess
+import stat
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime
@@ -243,8 +244,15 @@ def _persistent_sets_lock(path: Path):
     """Serialize dynamic-set reads and read-modify-write transactions."""
     lock_path = path.with_name(path.name + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o660)
+    fd = os.open(
+        lock_path,
+        os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o660,
+    )
     try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise OSError(f"Unsafe persistent-state lock file: {lock_path}")
         try:
             import grp
             os.fchown(fd, -1, grp.getgrnam(_DAEMON_GROUP).gr_gid)
