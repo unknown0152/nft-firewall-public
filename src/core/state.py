@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 # ── Paths & constants ─────────────────────────────────────────────────────────
 
@@ -70,6 +70,7 @@ _DEFAULT_LOCK_DIR: Path = Path("/var/lib/nft-firewall-locks")
 _LOCK_DIR: Path = _DEFAULT_LOCK_DIR
 _LOCK_TIMEOUT_SECONDS: float = 10.0
 _LOCK_LOCAL = threading.local()
+_GEO_OWNERS_KEY = "geo_block_owners"
 _KNOWN_SETS: tuple[str, ...] = (
     SET_BLOCKED, SET_TRUSTED, SET_WHITELIST, SET_DK,
     SET_THREATFEED, SET_GEO_BLOCKED,
@@ -397,7 +398,7 @@ def disarm_rollback_guard(guard: RollbackGuard) -> None:
     guard.token.unlink(missing_ok=True)
 
 
-def _load_persistent_sets_unlocked(path: Path) -> dict[str, list[str]]:
+def _load_persistent_sets_unlocked(path: Path) -> dict[str, Any]:
     """Load dynamic set members persisted across ruleset reloads."""
     from utils.validation import (
         validate_block_target,
@@ -405,7 +406,8 @@ def _load_persistent_sets_unlocked(path: Path) -> dict[str, list[str]]:
         validate_trusted_target,
     )
 
-    data: dict[str, list[str]] = {name: [] for name in _KNOWN_SETS}
+    data: dict[str, Any] = {name: [] for name in _KNOWN_SETS}
+    data[_GEO_OWNERS_KEY] = {}
     if not path.exists():
         return data
     try:
@@ -436,23 +438,45 @@ def _load_persistent_sets_unlocked(path: Path) -> dict[str, list[str]]:
                         f"{raw_value!r}: {result.reason}"
                     )
             data[name] = sorted(clean)
+    raw_owners = raw.get(_GEO_OWNERS_KEY, {})
+    if isinstance(raw_owners, dict):
+        owners: dict[str, list[str]] = {}
+        for raw_cc, values in raw_owners.items():
+            cc = str(raw_cc).strip().upper()
+            if not re.fullmatch(r"[A-Z]{2}", cc) or not isinstance(values, list):
+                continue
+            clean = {
+                result.value
+                for value in values
+                for result in [validate_ipv4_network(str(value).strip())]
+                if result.ok
+            }
+            if clean:
+                owners[cc] = sorted(clean)
+        data[_GEO_OWNERS_KEY] = owners
     return data
 
 
-def load_persistent_sets(path: Path | None = None) -> dict[str, list[str]]:
+def load_persistent_sets(path: Path | None = None) -> dict[str, Any]:
     """Load dynamic set members while excluding concurrent writers."""
     resolved = path or _SETS_STATE_FILE
     with _persistent_sets_lock(resolved):
         return _load_persistent_sets_unlocked(resolved)
 
 
-def _save_persistent_sets_unlocked(sets: dict[str, list[str]], path: Path) -> None:
+def _save_persistent_sets_unlocked(sets: dict[str, Any], path: Path) -> None:
     """Atomically persist dynamic set members."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         name: sorted({str(v).strip() for v in sets.get(name, []) if str(v).strip()})
         for name in _KNOWN_SETS
     }
+    owners = sets.get(_GEO_OWNERS_KEY, {})
+    data[_GEO_OWNERS_KEY] = {
+        str(cc).upper(): sorted({str(v).strip() for v in values if str(v).strip()})
+        for cc, values in owners.items()
+        if re.fullmatch(r"[A-Z]{2}", str(cc).upper()) and isinstance(values, list)
+    } if isinstance(owners, dict) else {}
     tmp: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -475,7 +499,7 @@ def _save_persistent_sets_unlocked(sets: dict[str, list[str]], path: Path) -> No
 
 
 def save_persistent_sets(
-    sets: dict[str, list[str]], path: Path | None = None
+    sets: dict[str, Any], path: Path | None = None
 ) -> None:
     """Atomically persist dynamic set members under an exclusive lock."""
     resolved = path or _SETS_STATE_FILE
@@ -483,7 +507,7 @@ def save_persistent_sets(
         _save_persistent_sets_unlocked(sets, resolved)
 
 
-def _update_persistent_sets(mutator, *, path: Path | None = None) -> dict[str, list[str]]:
+def _update_persistent_sets(mutator, *, path: Path | None = None) -> dict[str, Any]:
     """Run one locked read-modify-write transaction and return its result."""
     resolved = path or _SETS_STATE_FILE
     with _persistent_sets_lock(resolved):
@@ -741,6 +765,74 @@ def set_del_bulk(set_name: str, ips: list[str]) -> int:
         except Exception as exc:
             _rollback_or_raise("add", set_name, ips, exc)
     _audit_set_mutation("delete", set_name, ips)
+    return len(ips)
+
+
+def get_geoblock_owners() -> dict[str, list[str]]:
+    """Return country ownership stored in the authoritative dynamic document."""
+    document = load_persistent_sets()
+    owners = document.get(_GEO_OWNERS_KEY, {})
+    return {cc: list(values) for cc, values in owners.items()}
+
+
+def geoblock_add(cc: str, ips: list[str]) -> int:
+    """Add country prefixes and ownership in one compensated transaction."""
+    cc = cc.strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}", cc):
+        raise ValueError(f"invalid country code: {cc!r}")
+    if not ips:
+        return 0
+    with _persistent_sets_lock(_SETS_STATE_FILE):
+        result = _run_element_mutation("add", SET_GEO_BLOCKED, ips)
+        if result.returncode != 0:
+            print(f"[state] WARNING: geoblock add failed: {result.stderr.strip()}")
+            return 0
+        document = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
+        members = set(document.get(SET_GEO_BLOCKED, []))
+        members.update(ips)
+        document[SET_GEO_BLOCKED] = sorted(members)
+        owners = dict(document.get(_GEO_OWNERS_KEY, {}))
+        owned = set(owners.get(cc, []))
+        owned.update(ips)
+        owners[cc] = sorted(owned)
+        document[_GEO_OWNERS_KEY] = owners
+        try:
+            _save_persistent_sets_unlocked(document, _SETS_STATE_FILE)
+        except Exception as exc:
+            _rollback_or_raise("delete", SET_GEO_BLOCKED, ips, exc)
+    _audit_set_mutation("add", SET_GEO_BLOCKED, ips)
+    return len(ips)
+
+
+def geoblock_remove(cc: str, ips: list[str]) -> int:
+    """Remove country prefixes and ownership in one compensated transaction."""
+    cc = cc.strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}", cc):
+        raise ValueError(f"invalid country code: {cc!r}")
+    if not ips:
+        return 0
+    with _persistent_sets_lock(_SETS_STATE_FILE):
+        result = _run_element_mutation("delete", SET_GEO_BLOCKED, ips)
+        if result.returncode != 0:
+            print(f"[state] WARNING: geoblock delete failed: {result.stderr.strip()}")
+            return 0
+        document = _load_persistent_sets_unlocked(_SETS_STATE_FILE)
+        members = set(document.get(SET_GEO_BLOCKED, []))
+        members.difference_update(ips)
+        document[SET_GEO_BLOCKED] = sorted(members)
+        owners = dict(document.get(_GEO_OWNERS_KEY, {}))
+        remaining = set(owners.get(cc, []))
+        remaining.difference_update(ips)
+        if remaining:
+            owners[cc] = sorted(remaining)
+        else:
+            owners.pop(cc, None)
+        document[_GEO_OWNERS_KEY] = owners
+        try:
+            _save_persistent_sets_unlocked(document, _SETS_STATE_FILE)
+        except Exception as exc:
+            _rollback_or_raise("add", SET_GEO_BLOCKED, ips, exc)
+    _audit_set_mutation("delete", SET_GEO_BLOCKED, ips)
     return len(ips)
 
 

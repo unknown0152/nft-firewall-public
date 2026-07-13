@@ -223,6 +223,15 @@ def _ensure_group(name: str) -> None:
     _ok(f"Created group '{name}'")
 
 
+def _set_authoritative_fd_owner(fd: int) -> None:
+    """Make an already-open control-plane file root:fw-admin without a path race."""
+    try:
+        gid = pwd.getpwnam(SYSTEM_USER).pw_gid
+    except KeyError:
+        _die(f"Required system user does not exist: {SYSTEM_USER}")
+    os.fchown(fd, 0, gid)
+
+
 def _user_in_group(user: str, group: str) -> bool:
     try:
         return user in grp.getgrnam(group).gr_mem
@@ -873,7 +882,8 @@ def step3_scaffold_dirs() -> None:
         LIB_DIR / "dynamic-sets.json": (
             '{\n  "blocked_ips": [],\n  "trusted_ips": [],\n'
             '  "geowhitelist_ips": [],\n  "dk_ips": [],\n'
-            '  "threatfeed_ips": [],\n  "geo_blocked_ips": []\n}\n'
+            '  "threatfeed_ips": [],\n  "geo_blocked_ips": [],\n'
+            '  "geo_block_owners": {}\n}\n'
         ),
         LIB_DIR / "threatfeed-state.json": '{"ips": []}\n',
         LIB_DIR / "geoblock_state.json": '{}\n',
@@ -892,10 +902,16 @@ def step3_scaffold_dirs() -> None:
             if info.st_size == 0 and initial:
                 os.write(fd, initial.encode())
                 os.fsync(fd)
+            _set_authoritative_fd_owner(fd)
             os.fchmod(fd, 0o640)
+            linked = os.stat(path, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(linked.st_mode)
+                or (linked.st_dev, linked.st_ino) != (info.st_dev, info.st_ino)
+            ):
+                _die(f"Authoritative state path changed during setup: {path}")
         finally:
             os.close(fd)
-        _run(["chown", f"root:{SYSTEM_USER}", str(path)])
 
     for path, initial in authoritative_state.items():
         ensure_authoritative_file(path, initial)
@@ -1109,6 +1125,7 @@ def _install_keybase_wrapper(kb_user: str) -> None:
         '          upload_path="${!#}"\n'
         '          resolved_upload="$(/usr/bin/realpath -e -- "$upload_path" 2>/dev/null || true)"\n'
         '          [[ "$resolved_upload" == /run/nft-firewall-report/*.png ]] || allowed=0\n'
+        '          [[ "$(/usr/bin/dirname -- "$resolved_upload")" = "/run/nft-firewall-report" ]] || allowed=0\n'
         '          [[ -f "$resolved_upload" && ! -L "$upload_path" ]] || allowed=0\n'
         '          [[ "$(/usr/bin/stat -Lc %U:%h -- "$resolved_upload" 2>/dev/null || true)" = "nft-reporter:1" ]] || allowed=0\n'
         '          if [[ "$allowed" -eq 1 ]]; then\n'
@@ -1689,10 +1706,6 @@ exit 126
 # Each tuple is (regex pattern, replacement) applied line-by-line.
 # Replacements use named backreferences so the directive key is preserved.
 _PATCHES: List[Tuple[str, str]] = [
-    # User=<anything>  →  User=fw-admin
-    (r"^(User=).*$",
-     rf"\g<1>{SYSTEM_USER}"),
-
     # WorkingDirectory=<anything>  →  WorkingDirectory=/opt/nft-firewall
     (r"^(WorkingDirectory=).*$",
      rf"\g<1>{INSTALL_DIR}"),
@@ -1748,19 +1761,7 @@ def step5_deploy_services() -> None:
     for src in unit_files:
         try:
             raw = src.read_text()
-            if src.name in _ROOT_UNITS:
-                # Apply all patches EXCEPT User= so User=root is preserved
-                patched_lines = []
-                for line in raw.splitlines(keepends=True):
-                    stripped = line.rstrip("\n")
-                    for pattern, replacement in _PATCHES:
-                        if "User=" in pattern:
-                            continue
-                        stripped = re.sub(pattern, replacement, stripped)
-                    patched_lines.append(stripped + ("\n" if line.endswith("\n") else ""))
-                patched = "".join(patched_lines)
-            else:
-                patched = _patch_unit(raw)
+            patched = _patch_unit(raw)
             dst = SYSTEMD_DST / src.name
             dst.write_text(patched)
             dst.chmod(0o644)

@@ -143,6 +143,10 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     monkeypatch.setattr(setup, "LOCK_DIR", lock_dir)
     monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
     monkeypatch.setattr(setup, "_run", lambda cmd, **_kw: calls.append(cmd))
+    authoritative_fds = []
+    monkeypatch.setattr(
+        setup, "_set_authoritative_fd_owner", lambda fd: authoritative_fds.append(fd)
+    )
 
     setup.step3_scaffold_dirs()
 
@@ -163,9 +167,7 @@ def test_scaffold_dirs_sets_firewall_and_media_ownership(monkeypatch, tmp_path):
     for path in (lib_dir, log_dir):
         assert ["chown", "-R", "root:fw-admin", str(path)] in calls
     assert ["chown", "-R", "root:fw-admin", str(etc_dir)] in calls
-    for name in ("dynamic-sets.json", "threatfeed-state.json", "geoblock_state.json"):
-        assert ["chown", "root:fw-admin", str(lib_dir / name)] in calls
-    assert ["chown", "root:fw-admin", str(log_dir / "audit.jsonl")] in calls
+    assert len(authoritative_fds) == 4
     assert not any(call[:3] == ["chown", "-R", "media:media"] for call in calls)
 
 

@@ -524,6 +524,36 @@ def test_set_flush_restores_live_members_when_persistence_fails(
     ]
 
 
+@pytest.mark.parametrize(
+    ("operation", "forward", "rollback"),
+    [("add", "add element", "delete element"), ("remove", "delete element", "add element")],
+)
+def test_geoblock_owner_transaction_rolls_back_live_on_document_failure(
+    monkeypatch, tmp_path, operation, forward, rollback
+):
+    monkeypatch.setattr(state, "_SETS_STATE_FILE", tmp_path / "dynamic-sets.json")
+    scripts = []
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:2] == ["nft", "-f"]:
+            scripts.append(Path(cmd[2]).read_text())
+        return _result(cmd)
+
+    monkeypatch.setattr(state.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        state,
+        "_save_persistent_sets_unlocked",
+        lambda *_args: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    fn = state.geoblock_add if operation == "add" else state.geoblock_remove
+    with pytest.raises(OSError, match="disk full"):
+        fn("ZZ", ["203.0.113.0/24"])
+
+    assert forward in scripts[0]
+    assert rollback in scripts[1]
+
+
 def test_set_bulk_failures_and_convenience_validation(monkeypatch):
     monkeypatch.setattr(
         state.subprocess,

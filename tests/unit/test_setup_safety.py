@@ -226,6 +226,14 @@ def test_unit_patching_uses_configured_wireguard_interface(monkeypatch, tmp_path
     assert "wg-quick@wg0.service" not in patched
 
 
+def test_unit_patching_preserves_isolated_service_user(monkeypatch):
+    import setup
+
+    monkeypatch.setattr(setup, "_configured_vpn_interface", lambda: "wg0")
+
+    assert "User=nft-webui" in setup._patch_unit("User=nft-webui\n")
+
+
 def test_uninstall_flushes_live_ruleset(monkeypatch):
     import setup
 
@@ -506,6 +514,7 @@ def test_keybase_wrapper_is_limited_to_required_chat_operations(monkeypatch, tmp
     assert 'chown root:nft-report /run/nft-firewall-report' in text
     assert 'chmod 0510 /run/nft-firewall-report' in text
     assert '"/proc/self/fd/9"' in text
+    assert 'dirname -- "$resolved_upload"' in text
 
 
 def test_keybase_chatops_ready_rejects_logged_out_wrapper(monkeypatch, tmp_path):
@@ -749,6 +758,7 @@ def test_install_dir_is_root_owned_not_fw_admin(monkeypatch, tmp_path):
     monkeypatch.setattr(setup, "ETC_DIR", etc_dir)
     monkeypatch.setattr(setup, "LOCK_DIR", tmp_path / "var/lib/nft-firewall-locks")
     monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
+    monkeypatch.setattr(setup, "_set_authoritative_fd_owner", lambda _fd: None)
 
     setup.step3_scaffold_dirs()
 
@@ -1129,6 +1139,7 @@ def test_state_dirs_are_root_owned_shared_sticky_namespaces(monkeypatch, tmp_pat
     monkeypatch.setattr(setup, "ETC_DIR", etc_dir)
     monkeypatch.setattr(setup, "LOCK_DIR", tmp_path / "var/lib/nft-firewall-locks")
     monkeypatch.setattr(setup, "FIREWALL_DIRS", (install_dir, lib_dir, log_dir, etc_dir))
+    monkeypatch.setattr(setup, "_set_authoritative_fd_owner", lambda _fd: None)
 
     setup.step3_scaffold_dirs()
 
