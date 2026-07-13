@@ -1292,9 +1292,19 @@ case "${1:-}" in
   --check)
     if [ "$#" -eq 3 ] && [ "${2:-}" = "--file" ] && exec 3<"$3" \
        && [ "$(/usr/bin/stat -Lc %F -- /proc/self/fd/3)" = "regular file" ] \
-       && [ "$(/usr/bin/stat -Lc %U -- /proc/self/fd/3)" = "fw-admin" ] \
-       && ! LC_ALL=C /usr/bin/grep -Eq '(^|[[:space:];{}])include[[:space:]]' <&3; then
-      exec /usr/sbin/nft --check --file /proc/self/fd/3
+       && [ "$(/usr/bin/stat -Lc %U -- /proc/self/fd/3)" = "fw-admin" ]; then
+      umask 077
+      snapshot_dir="$(/usr/bin/mktemp -d /run/nft-firewall-check.XXXXXX)"
+      snapshot="$snapshot_dir/ruleset.conf"
+      cleanup_check_snapshot() { /bin/rm -rf -- "$snapshot_dir"; }
+      trap cleanup_check_snapshot EXIT HUP INT TERM
+      /bin/cat <&3 >"$snapshot"
+      /bin/chmod 0400 "$snapshot"
+      if LC_ALL=C /usr/bin/grep -Eq '(^|[[:space:];{}])include[[:space:]]' "$snapshot"; then
+        exit 126
+      fi
+      /usr/sbin/nft --check --file "$snapshot"
+      exit $?
     fi
     ;;
   --check-persisted)

@@ -91,12 +91,15 @@ def wrappers(tmp_path, monkeypatch):
     return emitted
 
 
-def run_wrapper(wrappers: dict[str, Path], name: str, *args: str):
+def run_wrapper(
+    wrappers: dict[str, Path], name: str, *args: str, env: dict[str, str] | None = None
+):
     return subprocess.run(
         ["bash", str(wrappers[name]), *args],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
@@ -191,6 +194,18 @@ def test_nft_check_rejects_secondary_includes(wrappers, tmp_path):
     result = run_wrapper(wrappers, "fw-nft", "--check", "--file", str(check_file))
 
     assert result.returncode == 126, result.stdout + result.stderr
+
+
+def test_nft_check_parses_root_owned_snapshot_not_mutable_source(wrappers):
+    wrapper_text = wrappers["fw-nft"].read_text()
+    check_branch = wrapper_text.split("--check)", 1)[1].split(
+        "--check-persisted)", 1
+    )[0]
+
+    assert 'snapshot="$snapshot_dir/ruleset.conf"' in wrapper_text
+    assert 'grep -Eq' in wrapper_text and '"$snapshot"' in wrapper_text
+    assert '--file "$snapshot"' in wrapper_text
+    assert '--file /proc/self/fd/3' not in check_branch
 
 
 def test_wg_inspection_preserves_base64_padding(wrappers):
